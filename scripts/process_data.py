@@ -1,3 +1,32 @@
+"""
+eCFR Data Processor
+
+This module processes downloaded federal regulations from the Electronic Code of Federal 
+Regulations (eCFR) and calculates various readability metrics. It stores the results in 
+a SQLite database for further analysis.
+
+Example usage:
+    from process_data import process_agencies
+
+    # Process all downloaded agency regulations
+    process_agencies()
+
+The module calculates various metrics including:
+- Basic statistics (word count, sentence count, syllable count)
+- Readability scores (Flesch Reading Ease, Gunning Fog, SMOG Index, etc.)
+- Complexity measures (type-token ratio, polysyllabic words, etc.)
+
+The processed data is stored in a SQLite database with the following structure:
+    data/
+    ├── db/
+    │   └── regulations.db         # SQLite database with metrics
+    └── logs/
+        └── process_data.log      # Processing logs
+
+The database schema includes detailed metrics for each regulation version,
+with timestamps and agency identification.
+"""
+
 import logging
 import re
 from datetime import datetime
@@ -8,9 +37,15 @@ from sqlalchemy import Column, DateTime, Float, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
-# Create necessary directories first
 def create_directories():
-    """Create required directories if they don't exist"""
+    """
+    Create required directories for logs and database storage.
+
+    Creates the following directory structure if it doesn't exist:
+        data/
+        ├── logs/    # For log files
+        └── db/      # For SQLite database
+    """
     Path("data/logs").mkdir(parents=True, exist_ok=True)
     Path("data/db").mkdir(parents=True, exist_ok=True)
 
@@ -35,6 +70,37 @@ Base = declarative_base()
 
 
 class RegulationMetrics(Base):
+    """
+    SQLAlchemy model representing regulation metrics in the database.
+
+    Stores various readability and complexity metrics for each regulation version,
+    including basic statistics, readability scores, and advanced complexity measures.
+
+    Attributes:
+        id (int): Primary key
+        agency (str): Agency identifier/slug
+        title (str): CFR title number
+        chapter (str): Chapter number within title
+        date (str): Version date of the regulation
+        word_count (int): Total number of words
+        flesch_reading_ease (float): Flesch Reading Ease score
+        flesch_kincaid_grade (float): Flesch-Kincaid Grade Level
+        gunning_fog (float): Gunning Fog Index
+        smog_index (float): SMOG Index
+        automated_readability_index (float): Automated Readability Index
+        coleman_liau_index (float): Coleman-Liau Index
+        linsear_write (float): Linsear Write Formula score
+        dale_chall (float): Dale-Chall Readability score
+        difficult_words (int): Count of difficult words
+        sentence_count (int): Total number of sentences
+        avg_sentence_length (float): Average words per sentence
+        syllable_count (int): Total syllable count
+        avg_syllables_per_word (float): Average syllables per word
+        type_token_ratio (float): Ratio of unique words to total words
+        polysyllabic_words (int): Count of words with 3+ syllables
+        created_at (datetime): Timestamp of record creation
+    """
+
     __tablename__ = "regulation_metrics"
 
     id = Column(Integer, primary_key=True)
@@ -62,7 +128,12 @@ class RegulationMetrics(Base):
 
 
 def create_db():
-    """Create the SQLite database and tables"""
+    """
+    Create the SQLite database and initialize tables.
+
+    Returns:
+        sqlalchemy.engine.Engine: Database engine instance
+    """
     logger.info("Creating/connecting to database")
     engine = create_engine("sqlite:///data/db/regulations.db")
     Base.metadata.create_all(engine)
@@ -71,7 +142,15 @@ def create_db():
 
 
 def extract_title_chapter(filename):
-    """Extract title and chapter from filename"""
+    """
+    Extract title and chapter numbers from a regulation filename.
+
+    Args:
+        filename (str): Name of the regulation file
+
+    Returns:
+        tuple: (title, chapter) numbers as strings, or (None, None) if not found
+    """
     match = re.search(r"title_(\d+)_chapter_([^_]+)", filename)
     if match:
         return match.group(1), match.group(2)
@@ -79,7 +158,18 @@ def extract_title_chapter(filename):
 
 
 def calculate_metrics(text):
-    """Calculate various text metrics including additional complexity measures"""
+    """
+    Calculate comprehensive readability and complexity metrics for regulation text.
+
+    Args:
+        text (str): Plain text content of the regulation
+
+    Returns:
+        dict: Dictionary containing all calculated metrics including:
+            - Basic statistics (word count, sentence count)
+            - Readability scores (Flesch, Gunning Fog, etc.)
+            - Complexity measures (type-token ratio, polysyllabic words)
+    """
     word_count = len(text.split())
     sentence_count = textstat.sentence_count(text)
     syllable_count = textstat.syllable_count(text)
@@ -116,7 +206,16 @@ def calculate_metrics(text):
 
 
 def process_agencies():
-    """Process all agency regulation files and store metrics"""
+    """
+    Process all downloaded agency regulations and store metrics in database.
+
+    Walks through the agency directories, processes each regulation text file,
+    calculates metrics, and stores results in the SQLite database. Handles errors
+    gracefully and logs processing status.
+
+    The function expects regulations to be in the following structure:
+        data/agencies/{agency-slug}/text/*.txt
+    """
     # Create directories first
     create_directories()
 

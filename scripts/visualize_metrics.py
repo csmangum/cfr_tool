@@ -1,3 +1,36 @@
+"""
+eCFR Data Visualizer
+
+This module creates visualizations and statistical analyses of federal regulations data
+from the Electronic Code of Federal Regulations (eCFR). It generates plots and statistics
+for readability metrics, complexity measures, and agency comparisons.
+
+Example usage:
+    from visualize_metrics import main
+    
+    # Generate all visualizations and statistics
+    main()
+
+The module generates the following outputs in the data directory:
+    data/
+    ├── plots/                     # Generated visualization plots
+    │   ├── readability_*.png      # Readability analysis plots
+    │   ├── complexity_*.png       # Complexity analysis plots
+    │   └── word_count_*.png       # Word count analysis plots
+    ├── stats/                     # Statistical analysis files
+    │   ├── overall_statistics.csv # Summary statistics for all metrics
+    │   └── agency_statistics.csv  # Agency-level statistics
+    └── logs/
+        └── visualize_metrics.log  # Processing logs
+
+The visualizations include:
+- Readability scores by agency
+- Distribution of various metrics
+- Correlation matrices
+- Agency comparisons
+- Complexity analysis
+"""
+
 import json
 import logging
 from pathlib import Path
@@ -10,7 +43,15 @@ from sqlalchemy import create_engine
 
 # Create necessary directories first
 def create_directories():
-    """Create required directories if they don't exist"""
+    """
+    Create required directories for storing visualizations and statistics.
+
+    Creates the following directory structure if it doesn't exist:
+        data/
+        ├── plots/    # For visualization plots
+        ├── stats/    # For statistical analysis files
+        └── logs/     # For log files
+    """
     Path("data/plots").mkdir(parents=True, exist_ok=True)
     Path("data/stats").mkdir(parents=True, exist_ok=True)
     Path("data/logs").mkdir(parents=True, exist_ok=True)
@@ -32,7 +73,19 @@ logger = logging.getLogger(__name__)
 
 
 def load_data():
-    """Load data from SQLite database into a pandas DataFrame"""
+    """
+    Load and prepare regulation metrics data from SQLite database.
+
+    Loads the metrics data and maps agencies to their parent departments using
+    the agencies.json mapping file. Smaller agencies are grouped under their
+    parent departments or "Other Agencies" category.
+
+    Returns:
+        pandas.DataFrame: DataFrame containing regulation metrics with agency grouping
+
+    Raises:
+        Exception: If database connection or data loading fails
+    """
     logger.info("Loading data from database")
     try:
         engine = create_engine("sqlite:///data/db/regulations.db")
@@ -112,7 +165,15 @@ def load_data():
 
 
 def plot_readability_by_agency(df):
-    """Create a box plot of readability scores by agency"""
+    """
+    Create box plot visualization of readability scores across agencies.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a box plot showing the distribution of Flesch Reading Ease scores
+    for each agency group, saved as 'readability_by_agency.png'.
+    """
     logger.info("Creating readability by agency plot")
     try:
         plt.figure(figsize=(15, 8))
@@ -128,7 +189,20 @@ def plot_readability_by_agency(df):
 
 
 def plot_readability_metrics_distribution(df):
-    """Create histograms of different readability metrics"""
+    """
+    Create histogram visualizations for different readability metrics.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a 2x2 grid of histograms showing the distribution of:
+    - Flesch Reading Ease
+    - Flesch-Kincaid Grade
+    - Gunning Fog Index
+    - SMOG Index
+
+    Saved as 'readability_distributions.png'.
+    """
     metrics = [
         "flesch_reading_ease",
         "flesch_kincaid_grade",
@@ -149,7 +223,16 @@ def plot_readability_metrics_distribution(df):
 
 
 def plot_word_count_by_agency(df):
-    """Create a bar plot of average word counts by agency"""
+    """
+    Create bar plot of average word counts across agencies.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a bar plot showing average word counts for the top 13 agencies
+    plus an "Other Agencies" category. Includes sample size annotations.
+    Saved as 'word_count_by_agency.png'.
+    """
     plt.figure(figsize=(12, 6))
 
     # Calculate average words by agency group
@@ -208,7 +291,15 @@ def plot_word_count_by_agency(df):
 
 
 def plot_readability_correlation(df):
-    """Create a correlation heatmap of readability metrics"""
+    """
+    Create correlation heatmap for readability metrics.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a heatmap showing correlations between different readability
+    metrics, saved as 'readability_correlation.png'.
+    """
     metrics = [
         "flesch_reading_ease",
         "flesch_kincaid_grade",
@@ -229,7 +320,22 @@ def plot_readability_correlation(df):
 
 
 def generate_summary_stats(df):
-    """Generate and save summary statistics"""
+    """
+    Generate and save summary statistics for regulation metrics.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Returns:
+        tuple: (overall_stats, agency_stats) DataFrames containing summary statistics
+
+    Creates two CSV files:
+    - overall_statistics.csv: Summary stats for all metrics
+    - agency_statistics.csv: Agency-level statistics
+
+    Raises:
+        Exception: If statistics generation fails
+    """
     logger.info("Generating summary statistics")
     try:
         # Overall statistics
@@ -259,7 +365,20 @@ def generate_summary_stats(df):
 
 
 def plot_complexity_metrics_distribution(df):
-    """Create histograms of different complexity metrics"""
+    """
+    Create histogram visualizations for text complexity metrics.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a 2x2 grid of histograms showing the distribution of:
+    - Average sentence length
+    - Average syllables per word
+    - Type-token ratio
+    - Polysyllabic word count
+
+    Saved as 'complexity_distributions.png'.
+    """
     logger.info("Creating complexity metrics distribution plots")
 
     metrics = [
@@ -283,7 +402,20 @@ def plot_complexity_metrics_distribution(df):
 
 
 def plot_complexity_by_agency(df):
-    """Create box plots for complexity metrics by agency"""
+    """
+    Create box plots comparing complexity metrics across agencies.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates separate box plots for each complexity metric:
+    - Average sentence length
+    - Vocabulary diversity
+    - Average syllables per word
+    - Complex words count
+
+    Saves multiple PNG files with '_by_agency' suffix.
+    """
     logger.info("Creating complexity by agency plots")
 
     metrics = [
@@ -306,7 +438,15 @@ def plot_complexity_by_agency(df):
 
 
 def plot_complexity_correlation_matrix(df):
-    """Create a correlation heatmap of complexity metrics"""
+    """
+    Create correlation heatmap for complexity metrics.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a heatmap showing correlations between different complexity
+    metrics and basic text statistics, saved as 'complexity_correlation.png'.
+    """
     logger.info("Creating complexity correlation matrix")
 
     metrics = [
@@ -330,7 +470,16 @@ def plot_complexity_correlation_matrix(df):
 
 
 def plot_complexity_vs_readability(df):
-    """Create scatter plots comparing complexity metrics with readability scores"""
+    """
+    Create scatter plots comparing complexity metrics with readability scores.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing regulation metrics
+
+    Creates a figure with three scatter plots showing relationships between
+    complexity metrics and Flesch Reading Ease scores.
+    Saved as 'complexity_vs_readability.png'.
+    """
     logger.info("Creating complexity vs readability plots")
 
     complexity_metrics = [
@@ -353,6 +502,18 @@ def plot_complexity_vs_readability(df):
 
 
 def main():
+    """
+    Main execution function for generating all visualizations and statistics.
+
+    Orchestrates the complete visualization process:
+    1. Loads and prepares regulation metrics data
+    2. Generates all visualization plots
+    3. Calculates and saves summary statistics
+    4. Logs key findings and insights
+
+    Raises:
+        Exception: If any part of the visualization process fails
+    """
     logger.info("Starting visualization process")
     try:
         # Set style for all plots
