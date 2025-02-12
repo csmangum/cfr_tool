@@ -56,7 +56,7 @@ def main():
         # Download data
         download_task = progress.add_task("[cyan]Downloading regulations...", total=100)
         downloader = ECFRDownloader()
-        downloader.download_all_agencies()
+        downloader.download_all_agencies(progress=progress, task_id=download_task)
         progress.update(download_task, completed=100)
 
         # Process data

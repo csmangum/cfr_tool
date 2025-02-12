@@ -40,6 +40,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -129,154 +130,228 @@ class ECFRDownloader:
 
         Args:
             xml_content: The XML content string to parse
-            chapter: Optional chapter number to filter content
+            chapter: Optional chapter number within the title
 
         Returns:
             str: Cleaned plain text content, or None if parsing fails
-
-        Extracts text from XML elements while preserving structure. Removes excess
-        whitespace and normalizes line breaks.
         """
         try:
             root = ET.fromstring(xml_content)
-            if chapter:
-                # Look for the chapter DIV3 element
+
+            # First find the correct chapter - handle both XML formats
+            chapter_root = None
+
+            # Try to find chapter in full title format first
+            if chapter and root.tag == "ECFR":
+                # Navigate through the hierarchy to find Chapter III
                 chapter_elem = root.find(f".//DIV3[@N='{chapter}'][@TYPE='CHAPTER']")
                 if chapter_elem is not None:
-                    root = chapter_elem
-                else:
-                    logging.warning("Chapter %s not found in XML", chapter)
-                    return None
+                    chapter_root = chapter_elem
+                    logging.info(f"Found chapter {chapter} in full title XML")
 
+            # If we didn't find a chapter and the root is already a DIV3, use it
+            if chapter_root is None and root.tag == "DIV3" and root.get("N") == chapter:
+                chapter_root = root
+                logging.info(f"XML already at chapter {chapter} level")
+
+            if chapter_root is None:
+                logging.error(f"Could not find chapter {chapter} in XML structure")
+                return None
+
+            # Now extract text from the chapter
             text_parts = []
-            for elem in root.iter():
-                if elem.text and elem.text.strip():
+            for elem in chapter_root.iter():
+                # Skip certain elements that might contain non-regulation text
+                if elem.tag in ["PRTPAGE", "FTREF", "CITA", "SOURCE", "HED", "AMDDATE"]:
+                    continue
+
+                # Special handling for section headers
+                if elem.tag == "HEAD":
+                    if elem.text and elem.text.strip():
+                        text_parts.append("\n" + elem.text.strip() + "\n")
+                # Regular text content
+                elif elem.text and elem.text.strip():
                     text_parts.append(elem.text.strip())
                 if elem.tail and elem.tail.strip():
                     text_parts.append(elem.tail.strip())
 
+            if not text_parts:
+                logging.error("No text content found in XML")
+                return None
+
             text = "\n".join(text_parts)
-            text = re.sub(r"\n\s*\n", "\n\n", text)
+            text = re.sub(r"\n\s*\n", "\n\n", text)  # Normalize line breaks
+            text = re.sub(r"\s+", " ", text)  # Normalize whitespace
+
+            if len(text.strip()) < 100:  # Arbitrary minimum length check
+                logging.error(
+                    f"Extracted text suspiciously short ({len(text.strip())} chars)"
+                )
+                return None
+
             return text.strip()
+
         except ET.ParseError as e:
-            logging.error("Error parsing XML: %s", e)
+            logging.error(f"XML parsing error: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"Unexpected error extracting text: {e}")
             return None
 
     def get_available_versions(
         self, title: str, chapter: Optional[str] = None, date: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve all available versions for a given title (and chapter/date filters), returning only the latest version.
+        Retrieve available version for a given title and date.
         """
-        url = self.VERSIONS_URL_TEMPLATE.format(title=title)
-        params: Dict[str, Any] = {}
+        url = self.TITLE_URL_TEMPLATE.format(date=date, title=title)
         if chapter:
-            params["chapter"] = chapter
-        if date:
-            params["issue_date[lte]"] = date
+            url += f"?chapter={chapter}"  # Add chapter parameter to URL
 
-        try:
-            response = self.session.get(url, params=params)
-            response.raise_for_status()
-            versions_data = response.json()
+        max_retries = 3  # Increased from 1 to 3
+        retry_delay = 3  # seconds
+        timeout = 60  # Increased from 30 to 60 seconds
 
-            if versions_data.get("content_versions"):
-                latest_version = max(
-                    versions_data["content_versions"], key=lambda x: x["issue_date"]
+        for attempt in range(max_retries):
+            try:
+                # Do a GET request and store the content for later use
+                response = self.session.get(url, timeout=timeout)
+
+                if response.status_code == 200:
+                    self.session.last_content = response.text
+                    return [{"issue_date": date}]
+                elif response.status_code == 404:
+                    logging.info(f"No version available for Title {title} on {date}")
+                    return []
+                else:
+                    response.raise_for_status()
+
+            except requests.Timeout:
+                if attempt < max_retries - 1:
+                    logging.warning(
+                        f"Timeout checking Title {title} for {date}. "
+                        f"Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                logging.error(
+                    f"Timeout checking Title {title} for {date} "
+                    f"after {max_retries} attempts"
                 )
-                return [latest_version]
-            return []
+                return []
 
-        except requests.RequestException as e:
-            logging.error(
-                "Error getting versions for Title %s Chapter %s: %s", title, chapter, e
-            )
-            return []
+            except requests.RequestException as e:
+                logging.error(
+                    "Error checking version for Title %s date %s: %s", title, date, e
+                )
+                return []
+
+        return []
 
     def download_regulation(
         self, title: str, chapter: Optional[str], date: str, output_dir: Path
     ) -> bool:
         """
-        Download XML content for the most recent version of a regulation.
+        Download XML content for a specific version of a regulation.
 
         Args:
             title: The CFR title number
             chapter: Optional chapter number within the title
-            date: The target date for the regulation version
+            date: The target date for the regulation version (must be exact match)
             output_dir: Directory to store downloaded content
 
         Returns:
-            bool: True if download successful or content already exists, False on failure
-
-        Downloads both XML and plain text versions. Uses content hashing to skip
-        duplicate downloads. Stores content in xml/, text/, and hashes/ subdirectories.
+            bool: True if download successful or file already exists, False on failure
         """
-        versions = self.get_available_versions(title, chapter, date)
-        if not versions:
-            logging.info("No versions found for Title %s Chapter %s", title, chapter)
-            return False
-
-        # Prepare directories for storing hashes, XML, and text versions
-        hash_dir = output_dir / "hashes"
+        # Prepare directories for storing XML and text versions
         xml_dir = output_dir / "xml"
         text_dir = output_dir / "text"
-        hash_dir.mkdir(exist_ok=True)
         xml_dir.mkdir(exist_ok=True)
         text_dir.mkdir(exist_ok=True)
 
-        hash_file = hash_dir / f"title_{title}_chapter_{chapter}_hashes.json"
-        try:
-            with hash_file.open("r", encoding="utf-8") as f:
-                content_hashes = json.load(f)
-        except FileNotFoundError:
-            content_hashes = {}
+        # Check if text file already exists
+        text_filename = f"title_{title}_chapter_{chapter}_{date}.txt"
+        if (text_dir / text_filename).exists():
+            logging.info(
+                f"Text file already exists for Title {title} Chapter {chapter} date {date} - skipping download"
+            )
+            return True
+
+        versions = self.get_available_versions(title, chapter, date)
+        if not versions:
+            logging.info(
+                "No version found for Title %s Chapter %s on exact date %s",
+                title,
+                chapter,
+                date,
+            )
+            return False
 
         version = versions[0]
         version_date = version["issue_date"]
         xml_filename = f"title_{title}_chapter_{chapter}_{version_date}.xml"
         text_filename = f"title_{title}_chapter_{chapter}_{version_date}.txt"
 
-        # Build the URL for downloading the full XML content
-        url = self.TITLE_URL_TEMPLATE.format(date=version_date, title=title)
-        params = {"chapter": chapter} if chapter else {}
-
         try:
-            logging.info(
-                "Checking Title %s Chapter %s version %s...",
-                title,
-                chapter,
-                version_date,
-            )
-            response = self.session.get(url, params=params)
-            response.raise_for_status()
-            xml_content = response.text
-            content_hash = hashlib.sha256(xml_content.encode("utf-8")).hexdigest()
-
-            # Skip if content hash already exists
-            if content_hash in content_hashes.values():
+            # Use the content we already downloaded in get_available_versions
+            if hasattr(self.session, "last_content"):
+                xml_content = self.session.last_content
+                delattr(self.session, "last_content")  # Clean up after using
+            else:
+                # Fallback in case content wasn't cached
+                url = self.TITLE_URL_TEMPLATE.format(date=version_date, title=title)
+                params = {"chapter": chapter} if chapter else {}
                 logging.info(
-                    "Content for %s already exists (hash match) - skipping",
-                    version_date,
+                    f"Downloading Title {title} Chapter {chapter} version {version_date}..."
                 )
+                response = self.session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                xml_content = response.text
+
+            # Parse the XML to get just the chapter content when needed
+            try:
+                root = ET.fromstring(xml_content)
+                chapter_elem = None
+
+                # If this is a full title XML, extract just the chapter
+                if root.tag == "ECFR":
+                    chapter_elem = root.find(
+                        f".//DIV3[@N='{chapter}'][@TYPE='CHAPTER']"
+                    )
+                    if chapter_elem is not None:
+                        # Convert chapter element back to string, preserving XML declaration
+                        xml_content = '<?xml version="1.0"?>\n' + ET.tostring(
+                            chapter_elem, encoding="unicode"
+                        )
+                        logging.info(f"Extracted chapter {chapter} XML from full title")
+
+                # Save XML file (either full chapter or extracted chapter)
+                with (xml_dir / xml_filename).open("w", encoding="utf-8") as f:
+                    f.write(xml_content)
+
+                # Extract and save the text version
+                text_content = self.extract_text_from_xml(xml_content, chapter)
+                if text_content:
+                    try:
+                        with (text_dir / text_filename).open(
+                            "w", encoding="utf-8"
+                        ) as f:
+                            f.write(text_content)
+                        logging.info(
+                            f"Successfully extracted and saved text to {text_filename}"
+                        )
+                    except Exception as e:
+                        logging.error(f"Failed to save text file {text_filename}: {e}")
+                else:
+                    logging.error(f"Failed to extract text from {xml_filename}")
+
+                logging.info("Saved version %s to %s", version_date, output_dir)
                 return True
 
-            # Save XML file
-            with (xml_dir / xml_filename).open("w", encoding="utf-8") as f:
-                f.write(xml_content)
-
-            # Extract and save the text version
-            text_content = self.extract_text_from_xml(xml_content, chapter)
-            if text_content:
-                with (text_dir / text_filename).open("w", encoding="utf-8") as f:
-                    f.write(text_content)
-
-            # Update stored hash values
-            content_hashes[version_date] = content_hash
-            with hash_file.open("w", encoding="utf-8") as f:
-                json.dump(content_hashes, f, indent=2)
-
-            logging.info("Saved new version %s to %s", version_date, output_dir)
-            return True
+            except ET.ParseError as e:
+                logging.error(f"Error parsing XML content: {e}")
+                return False
 
         except requests.RequestException as e:
             logging.error(
@@ -354,12 +429,16 @@ class ECFRDownloader:
             if reg.get("from_child"):
                 logging.info("  (From %s)", reg.get("from_child"))
 
-    def download_all_agencies(self) -> None:
+    def download_all_agencies(self, progress=None, task_id=None) -> None:
         """
-        Orchestrate the download of regulations for all agencies.
+        Orchestrate the download of regulations for all agencies across multiple years.
         """
         start_time = datetime.now()
         logging.info("Starting download at %s", start_time)
+
+        # Generate list of dates (first of each year from 2017 to 2025)
+        dates = [f"{year}-01-01" for year in range(2017, 2026)]
+        logging.info("Will attempt to download versions for dates: %s", dates)
 
         # Ensure agencies data is available
         agencies_file = self.base_dir / "agencies.json"
@@ -385,17 +464,24 @@ class ECFRDownloader:
             with map_file.open("r", encoding="utf-8") as f:
                 regulations_map = json.load(f)
 
-        # Determine the date to use for all downloads
-        date = self.find_latest_available_date()
-        logging.info("Using date: %s", date)
-
         total_agencies = len(regulations_map)
+        total_operations = total_agencies * len(dates)
+        completed_operations = 0
+
         logging.info("Downloading regulations for %d agencies...", total_agencies)
-        for i, agency_slug in enumerate(regulations_map.keys(), start=1):
-            logging.info(
-                "Processing agency %d of %d: %s", i, total_agencies, agency_slug
-            )
-            self.download_agency_regulations(agency_slug, regulations_map, date)
+
+        for agency_slug in regulations_map.keys():
+            logging.info("Processing agency: %s", agency_slug)
+            for date in dates:
+                logging.info(f"Attempting download for date: {date}")
+                self.download_agency_regulations(agency_slug, regulations_map, date)
+                completed_operations += 1
+                if progress and task_id:
+                    # Update progress based on total operations
+                    progress.update(
+                        task_id,
+                        completed=(completed_operations * 100) / total_operations,
+                    )
 
         end_time = datetime.now()
         duration = end_time - start_time
@@ -403,9 +489,9 @@ class ECFRDownloader:
         logging.info("Total execution time: %s", duration)
 
 
-if __name__ == "__main__":
+def __main__():
     # Configure logging to write to both file and console
-    log_file = Path("data") / "data/logs/get_data.log"
+    log_file = Path("data/logs/get_data.log")
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
