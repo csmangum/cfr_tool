@@ -26,7 +26,7 @@ This tool provides an automated pipeline to:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/cfr_tool.git
+git clone https://github.com/csmangum/cfr_tool.git
 cd cfr_tool
 
 # Install dependencies
