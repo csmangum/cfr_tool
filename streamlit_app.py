@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 
@@ -7,29 +8,60 @@ import plotly.graph_objects as go
 import streamlit as st
 from sqlalchemy import create_engine
 
-# Set page config
+# -------------------------------------
+# Page configuration
+# -------------------------------------
 st.set_page_config(
     page_title="Federal Regulations Analysis",
-    page_icon="��",
+    page_icon="🚀",
     layout="wide",
-    menu_items={},  # Empty dict removes the menu items
+    menu_items={},
 )
 
 
-# Function to load data
+# -------------------------------------
+# Custom CSS for refined styling
+# -------------------------------------
+def local_css(css_string: str):
+    st.markdown(f"<style>{css_string}</style>", unsafe_allow_html=True)
+
+custom_css = """
+/* Center the header */
+h1 {
+    text-align: center;
+    color: #333333;
+}
+
+/* Sidebar background */
+[data-testid="stSidebar"] .css-1d391kg {  
+    background-color: #f0f2f6;
+}
+
+/* Increase spacing in the sidebar */
+[data-testid="stSidebar"] .css-1d391kg {
+    padding: 2rem;
+}
+"""
+local_css(custom_css)
+
+
+# -------------------------------------
+# Data Loading and Preparation
+# -------------------------------------
 @st.cache_data
 def load_data():
-    """Load and prepare regulation metrics data from SQLite database."""
+    """
+    Load regulation metrics data from the SQLite database.
+    Map agencies to their major groups using an external JSON file.
+    """
     try:
         engine = create_engine("sqlite:///data/db/regulations.db")
         df = pd.read_sql_table("regulation_metrics", engine)
 
-        # Load agency mapping
         with Path("data/agencies.json").open("r", encoding="utf-8") as f:
             agencies_data = json.load(f)
 
-        # Create mapping dictionary
-        mapping = {}
+        # Define major agencies and associated slugs.
         major_agencies = {
             "Department of Defense": ["defense-department"],
             "Department of Agriculture": ["agriculture-department"],
@@ -53,166 +85,106 @@ def load_data():
             "Other Agencies": [],
         }
 
+        # Build mapping from agency slug to major agency.
+        mapping = {}
         for agency in agencies_data.get("agencies", []):
             slug = agency.get("slug")
             assigned = False
-            for major_name, major_slugs in major_agencies.items():
-                if slug in major_slugs:
-                    mapping[slug] = major_name
-                    for child in agency.get("children", []):
-                        child_slug = child.get("slug")
-                        if child_slug:
-                            mapping[child_slug] = major_name
+            for major, slugs in major_agencies.items():
+                if slug in slugs:
+                    mapping[slug] = major
+                    mapping.update(
+                        {
+                            child.get("slug"): major
+                            for child in agency.get("children", [])
+                            if child.get("slug")
+                        }
+                    )
                     assigned = True
                     break
             if not assigned:
                 mapping[slug] = "Other Agencies"
-                for child in agency.get("children", []):
-                    child_slug = child.get("slug")
-                    if child_slug:
-                        mapping[child_slug] = "Other Agencies"
+                mapping.update(
+                    {
+                        child.get("slug"): "Other Agencies"
+                        for child in agency.get("children", [])
+                        if child.get("slug")
+                    }
+                )
 
-        # Map agencies to their groups
         df["agency_group"] = df["agency"].map(mapping)
-
         return df
+
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return None
 
 
-# Main app
-def main():
-    # Remove sidebar filters and move to main content
-    st.title("Federal Regulations Analysis Dashboard")
-    st.write(
-        "Interactive analysis of federal regulation complexity and metrics across agencies"
-    )
-
-    # Load data
-    df = load_data()
-    if df is None:
-        st.error("Failed to load data. Please check the database connection.")
-        return
-
-    # Move filters to main content area
-    st.write(
-        """
-    **Agency Selection**  
-    Select specific agencies to compare their regulations. By default, all agencies are shown.
+# -------------------------------------
+# Utility: Download Link for Data
+# -------------------------------------
+def download_link(object_to_download, download_filename, download_link_text):
     """
+    Generates a link to download the given object_to_download.
+    If the object is a DataFrame, it is converted to CSV.
+    """
+    if isinstance(object_to_download, pd.DataFrame):
+        object_to_download = object_to_download.to_csv(index=False)
+    b64 = base64.b64encode(object_to_download.encode()).decode()
+    return f'<a href="data:file/txt;base64,{b64}" download="{download_filename}">{download_link_text}</a>'
+
+
+# -------------------------------------
+# Plotting Functions
+# -------------------------------------
+def plot_word_count(filtered_df: pd.DataFrame):
+    """Display a bar chart and summary statistics for total word count by agency."""
+    agency_wordcounts = (
+        filtered_df.groupby("agency_group")["word_count"]
+        .sum()
+        .sort_values(ascending=True)
     )
-    selected_agencies = st.multiselect(
-        "Select Agencies",
-        options=sorted(df["agency_group"].unique()),
-        default=sorted(df["agency_group"].unique()),
+    fig = px.bar(
+        x=agency_wordcounts.values,
+        y=agency_wordcounts.index,
+        orientation="h",
+        title="Total Word Count by Agency",
+        labels={"x": "Total Word Count", "y": "Agency"},
     )
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Filter data based on selection
-    filtered_df = df[df["agency_group"].isin(selected_agencies)]
-
-    # Create two columns for metrics
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Word Count Analysis")
-        st.write(
-            """
-        This chart shows the total volume of regulations by agency, measured in word count.
-        Longer bars indicate agencies with more extensive regulatory text.
-        The summary statistics below show the distribution of document lengths within each agency.
-        """
-        )
-
-        # Calculate total word count by agency and sort
-        agency_wordcounts = (
-            filtered_df.groupby("agency_group")["word_count"]
-            .sum()
-            .sort_values(ascending=True)
-        )
-
-        # Create sorted bar chart for word count
-        fig_wordcount = px.bar(
-            x=agency_wordcounts.values,
-            y=agency_wordcounts.index,
-            orientation="h",  # horizontal bars
-            title="Total Word Count by Agency",
-            labels={"x": "Total Word Count", "y": "Agency"},
-        )
-        fig_wordcount.update_layout(showlegend=False)
-        st.plotly_chart(fig_wordcount, use_container_width=True)
-
-        # Summary statistics
-        st.write("Summary Statistics - Word Count")
-        word_count_stats = (
+    with st.expander("View Word Count Summary"):
+        stats = (
             filtered_df.groupby("agency_group")["word_count"]
             .agg(["mean", "median", "std", "count"])
             .round(2)
         )
-        st.dataframe(word_count_stats)
+        st.dataframe(stats)
 
-    with col2:
-        st.subheader("Complexity Analysis")
-        st.write(
-            """
-        This section analyzes the readability of regulations using various metrics:
-        - **Flesch Reading Ease**: Higher scores (0-100) indicate easier reading
-        - **Gunning Fog**: Estimates years of formal education needed (lower is simpler)
-        - **SMOG Index**: Estimates years of education needed to understand the text
-        - **Automated Readability**: Another grade-level estimate of text complexity
-        
-        The box plots show the distribution of complexity scores across documents within each agency.
-        """
-        )
 
-        # Metric selector
-        complexity_metric = st.selectbox(
-            "Select Complexity Metric",
-            options=[
-                "flesch_reading_ease",
-                "gunning_fog",
-                "smog_index",
-                "automated_readability_index",
-            ],
-            format_func=lambda x: x.replace("_", " ").title(),
-        )
+def plot_complexity(filtered_df: pd.DataFrame, metric: str):
+    """Display a box plot and summary statistics for a selected complexity metric."""
+    fig = px.box(
+        filtered_df,
+        x="agency_group",
+        y=metric,
+        title=f"Distribution of {metric.replace('_', ' ').title()} by Agency",
+        labels={"agency_group": "Agency", metric: metric.replace("_", " ").title()},
+    )
+    fig.update_layout(xaxis_tickangle=-45)
+    st.plotly_chart(fig, use_container_width=True)
 
-        # Complexity distribution by agency
-        fig_complexity = px.box(
-            filtered_df,
-            x="agency_group",
-            y=complexity_metric,
-            title=f"Distribution of {complexity_metric.replace('_', ' ').title()} by Agency",
-            labels={
-                "agency_group": "Agency",
-                complexity_metric: complexity_metric.replace("_", " ").title(),
-            },
-        )
-        fig_complexity.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_complexity, use_container_width=True)
-
-        # Summary statistics
-        st.write(f"Summary Statistics - {complexity_metric.replace('_', ' ').title()}")
-        complexity_stats = (
-            filtered_df.groupby("agency_group")[complexity_metric]
+    with st.expander("View Complexity Summary"):
+        stats = (
+            filtered_df.groupby("agency_group")[metric]
             .agg(["mean", "median", "std", "count"])
             .round(2)
         )
-        st.dataframe(complexity_stats)
+        st.dataframe(stats)
 
-    # Additional Analysis Section
-    st.header("Additional Analysis")
 
-    st.write(
-        """
-    **Correlation Matrix**  
-    This heatmap shows relationships between different metrics. Strong positive correlations appear in red,
-    negative in blue. For example, we can see how different readability scores relate to each other and
-    to basic text statistics like word count and sentence length.
-    """
-    )
-
-    # Correlation heatmap
+def plot_correlation(filtered_df: pd.DataFrame):
+    """Display a correlation heatmap for selected metrics."""
     metrics = [
         "flesch_reading_ease",
         "gunning_fog",
@@ -223,10 +195,8 @@ def main():
         "avg_sentence_length",
         "type_token_ratio",
     ]
-
     correlation = filtered_df[metrics].corr()
-
-    fig_correlation = go.Figure(
+    fig = go.Figure(
         data=go.Heatmap(
             z=correlation,
             x=metrics,
@@ -238,48 +208,135 @@ def main():
             colorscale="RdBu",
         )
     )
-
-    fig_correlation.update_layout(
+    fig.update_layout(
         title="Correlation Matrix of Metrics", xaxis_tickangle=-45, height=600
     )
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.plotly_chart(fig_correlation, use_container_width=True)
 
-    # Time series analysis if date is available
-    if "date" in df.columns:
-        st.subheader("Temporal Analysis")
-        st.write(
-            """
-        This graph shows how regulation complexity has changed over time for each agency.
-        Trends might indicate whether agencies are making their regulations more or less complex
-        over time.
-        """
+def plot_temporal(filtered_df: pd.DataFrame, metric: str):
+    """Display a time-series trend for the selected complexity metric by agency."""
+    df_copy = filtered_df.copy()
+    df_copy["date"] = pd.to_datetime(df_copy["date"])
+    temporal_data = (
+        df_copy.groupby(["date", "agency_group"])[metric].mean().reset_index()
+    )
+    fig = px.line(
+        temporal_data,
+        x="date",
+        y=metric,
+        color="agency_group",
+        title=f"Trend of {metric.replace('_', ' ').title()} Over Time",
+        labels={
+            "date": "Date",
+            metric: metric.replace("_", " ").title(),
+            "agency_group": "Agency",
+        },
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# -------------------------------------
+# Main Application
+# -------------------------------------
+def main():
+    # Custom header
+    st.markdown(
+        "<h1>Federal Regulations Analysis Dashboard</h1>", unsafe_allow_html=True
+    )
+    st.markdown(
+        "Use the sidebar to filter data and navigate between analysis sections."
+    )
+
+    # Load data with a spinner for a smoother experience.
+    with st.spinner("Loading data..."):
+        df = load_data()
+    if df is None:
+        st.error("Failed to load data. Please check the database connection.")
+        return
+
+    # Sidebar: Filter Options
+    st.sidebar.header("Filters")
+    all_agencies = sorted(df["agency_group"].dropna().unique())
+    selected_agencies = st.sidebar.multiselect(
+        "Select Agencies", options=all_agencies, default=all_agencies
+    )
+    filtered_df = df[df["agency_group"].isin(selected_agencies)].copy()
+    filtered_df["date"] = pd.to_datetime(filtered_df["date"])
+
+    # Date range filter
+    if "date" in filtered_df.columns:
+        min_date = filtered_df["date"].min()
+        max_date = filtered_df["date"].max()
+        date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            filtered_df = filtered_df[
+                (filtered_df["date"].dt.date >= start_date)
+                & (filtered_df["date"].dt.date <= end_date)
+            ]
+
+    # Sidebar: Data download link
+    st.sidebar.markdown("### Download Data")
+    tmp_download_link = download_link(
+        filtered_df, "filtered_data.csv", "Download Filtered Data (CSV)"
+    )
+    st.sidebar.markdown(tmp_download_link, unsafe_allow_html=True)
+
+    # Sidebar Navigation: Select the analysis section
+    analysis_mode = st.sidebar.radio(
+        "Choose Analysis Section",
+        ("Word Count Analysis", "Complexity Analysis", "Additional Analysis"),
+    )
+
+    # -------------------------------------
+    # Analysis Sections
+    # -------------------------------------
+    if analysis_mode == "Word Count Analysis":
+        st.header("Word Count Analysis")
+        st.markdown(
+            "Explore the total word count by agency and view summary statistics."
         )
+        plot_word_count(filtered_df)
 
-        # Convert date to datetime if it's not already
-        filtered_df["date"] = pd.to_datetime(filtered_df["date"])
-
-        # Group by date and agency, calculate mean metrics
-        temporal_data = (
-            filtered_df.groupby(["date", "agency_group"])[complexity_metric]
-            .mean()
-            .reset_index()
+    elif analysis_mode == "Complexity Analysis":
+        st.header("Complexity Analysis")
+        st.markdown(
+            "Select a complexity metric below to examine its distribution across agencies."
         )
-
-        fig_temporal = px.line(
-            temporal_data,
-            x="date",
-            y=complexity_metric,
-            color="agency_group",
-            title=f"Trend of {complexity_metric.replace('_', ' ').title()} Over Time",
-            labels={
-                "date": "Date",
-                complexity_metric: complexity_metric.replace("_", " ").title(),
-                "agency_group": "Agency",
-            },
+        complexity_metric = st.selectbox(
+            "Select Complexity Metric",
+            options=[
+                "flesch_reading_ease",
+                "gunning_fog",
+                "smog_index",
+                "automated_readability_index",
+            ],
+            format_func=lambda x: x.replace("_", " ").title(),
         )
+        plot_complexity(filtered_df, complexity_metric)
 
-        st.plotly_chart(fig_temporal, use_container_width=True)
+    elif analysis_mode == "Additional Analysis":
+        st.header("Additional Analysis")
+        st.markdown(
+            "Dive deeper into the data by exploring correlations and temporal trends."
+        )
+        with st.expander("View Correlation Matrix"):
+            plot_correlation(filtered_df)
+        if "date" in df.columns:
+            with st.expander("View Temporal Analysis"):
+                temporal_metric = st.selectbox(
+                    "Select Complexity Metric for Temporal Analysis",
+                    options=[
+                        "flesch_reading_ease",
+                        "gunning_fog",
+                        "smog_index",
+                        "automated_readability_index",
+                    ],
+                    format_func=lambda x: x.replace("_", " ").title(),
+                    key="temporal_metric",
+                )
+                plot_temporal(filtered_df, temporal_metric)
 
 
 if __name__ == "__main__":

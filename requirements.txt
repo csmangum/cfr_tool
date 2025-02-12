@@ -12,7 +12,11 @@ textstat>=0.7.3
 # Visualization
 matplotlib>=3.8.0
 seaborn>=0.13.0
+plotly>=5.22.0
 
 # Optional but recommended
 python-dotenv>=1.0.0  # For environment variable management
 tqdm>=4.66.0         # For progress bars 
+
+# App
+streamlit>=1.29.0
