@@ -170,7 +170,11 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# data folder
-data/
+# data folder - ignore everything except specific files
+data/*
+!data/agencies.json
+!data/db/
+data/db/*
+!data/db/regulations.db
 
 .vscode/
