@@ -35,6 +35,8 @@ from pathlib import Path
 import textstat
 from sqlalchemy import Column, DateTime, Float, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sentence_transformers import SentenceTransformer
+import numpy as np
 
 
 def create_directories():
@@ -98,6 +100,7 @@ class RegulationMetrics(Base):
         avg_syllables_per_word (float): Average syllables per word
         type_token_ratio (float): Ratio of unique words to total words
         polysyllabic_words (int): Count of words with 3+ syllables
+        metadata_embedding (String): Metadata embedding as a string
         created_at (datetime): Timestamp of record creation
     """
 
@@ -124,6 +127,7 @@ class RegulationMetrics(Base):
     avg_syllables_per_word = Column(Float)
     type_token_ratio = Column(Float)
     polysyllabic_words = Column(Integer)
+    metadata_embedding = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -230,6 +234,9 @@ def process_agencies():
     total_files = 0
     processed_files = 0
 
+    # Load embedding model
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+
     for agency_dir in data_dir.iterdir():
         if not agency_dir.is_dir():
             continue
@@ -266,12 +273,28 @@ def process_agencies():
                 # Calculate metrics
                 metrics = calculate_metrics(text)
 
+                # Generate text embedding
+                text_vector = model.encode(text)
+
+                # Generate metadata embeddings
+                metadata = {}  # Placeholder for actual metadata extraction logic
+                cross_ref_vec = model.encode(metadata.get("cross_references", [""])[0])
+                definition_vec = model.encode(metadata.get("definitions", [""])[0])
+                authority_vec = model.encode(metadata.get("authority", ""))
+
+                # Merge metadata embeddings
+                metadata_embedding = np.mean(
+                    [cross_ref_vec, definition_vec, authority_vec], axis=0
+                )
+                final_embedding = np.concatenate([text_vector, metadata_embedding])
+
                 # Create database record
                 record = RegulationMetrics(
                     agency=agency_name,
                     title=title,
                     chapter=chapter,
                     date=date,
+                    metadata_embedding=final_embedding.tolist(),  # Convert to list for storage
                     **metrics,
                 )
 

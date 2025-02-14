@@ -20,3 +20,6 @@ tqdm>=4.66.0         # For progress bars
 
 # App
 streamlit>=1.29.0
+
+# Metadata vectorization
+sentence-transformers>=2.2.2

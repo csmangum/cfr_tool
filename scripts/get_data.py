@@ -198,6 +198,103 @@ class ECFRDownloader:
             logging.error(f"Unexpected error extracting text: {e}")
             return None
 
+    def extract_metadata(self, section) -> Dict[str, Any]:
+        """
+        Extract enriched metadata from a section.
+
+        Args:
+            section: The XML section element to extract metadata from
+
+        Returns:
+            dict: Dictionary containing extracted metadata fields
+        """
+        metadata = {}
+
+        # Extract section number and title
+        head = section.find("HEAD")
+        if head is not None:
+            metadata["title"] = self.clean_text(head.text)
+            if '§' in metadata:
+                metadata["section"] = metadata["title"].split('§')[1].strip()
+
+        # Extract authority (Legal basis)
+        auth = section.find(".//AUTH")
+        if auth is not None:
+            metadata["authority"] = self.clean_text(auth.text)
+
+        # Extract source of the regulation
+        source = section.find(".//SOURCE")
+        if source is not None:
+            metadata["source"] = self.clean_text(source.text)
+
+        # Extract cross-references to other sections
+        cross_refs = section.findall(".//CROSSREF/P")
+        metadata["cross_references"] = [self.clean_text(ref.text) for ref in cross_refs if ref.text]
+
+        # Extract definitions of terms (if any)
+        definitions = section.findall(".//P")
+        metadata["definitions"] = [self.clean_text(d.text) for d in definitions if "<I>" in ET.tostring(d).decode()]
+
+        # Extract last modification date
+        last_update = section.find(".//CITA")
+        if last_update is not None:
+            metadata["last_revision"] = self.clean_text(last_update.text)
+
+        # Extract enforcement agencies
+        enforcement_agencies = section.findall(".//ENFORCEMENT")
+        metadata["enforcement_agencies"] = [self.clean_text(agency.text) for agency in enforcement_agencies if agency.text]
+
+        # Extract regulatory intent/purpose
+        intent = section.find(".//INTENT")
+        if intent is not None:
+            metadata["regulatory_intent"] = self.clean_text(intent.text)
+
+        return metadata
+
+    def clean_text(self, text: str) -> str:
+        """
+        Normalize whitespace and remove unnecessary characters from text.
+
+        Args:
+            text: The text to clean
+
+        Returns:
+            str: Cleaned text
+        """
+        return " ".join(text.split()) if text else ""
+
+    def extract_chunks_with_metadata(self, xml_content: str) -> List[Dict[str, Any]]:
+        """
+        Extract all sections with enhanced metadata from XML content.
+
+        Args:
+            xml_content: The XML content string to parse
+
+        Returns:
+            list: List of dictionaries containing text chunks and metadata
+        """
+        try:
+            root = ET.fromstring(xml_content)
+            sections = root.xpath(".//DIV8")  # Adjust if needed
+            extracted_data = []
+
+            for section in sections:
+                metadata = self.extract_metadata(section)
+                paragraphs = [self.clean_text(p.text) for p in section.xpath(".//P") if p.text]
+
+                if paragraphs:
+                    chunk_text = " ".join(paragraphs)
+                    extracted_data.append({"text": chunk_text, "metadata": metadata})
+
+            return extracted_data
+
+        except ET.ParseError as e:
+            logging.error(f"XML parsing error: {e}")
+            return []
+        except Exception as e:
+            logging.error(f"Unexpected error extracting chunks with metadata: {e}")
+            return []
+
     def get_available_versions(
         self, title: str, chapter: Optional[str] = None, date: Optional[str] = None
     ) -> List[Dict[str, Any]]:
