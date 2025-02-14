@@ -116,6 +116,27 @@ def chunk_regulation_xml(xml_path: str) -> List[Tuple[str, dict]]:
         if hierarchy:
             metadata["hierarchy"] = hierarchy
 
+        # Extract additional metadata fields
+        cross_references = section.findall(".//CROSSREF")
+        if cross_references:
+            metadata["cross_references"] = [clean_text(ref.text) for ref in cross_references if ref.text]
+
+        definitions = section.findall(".//DEF")
+        if definitions:
+            metadata["definitions"] = [clean_text(defn.text) for defn in definitions if defn.text]
+
+        enforcement_agencies = section.findall(".//ENFORCEMENT")
+        if enforcement_agencies:
+            metadata["enforcement_agencies"] = [clean_text(agency.text) for agency in enforcement_agencies if agency.text]
+
+        last_revision = section.find(".//LASTREV")
+        if last_revision is not None:
+            metadata["date_of_last_revision"] = clean_text(last_revision.text)
+
+        intent = section.find(".//INTENT")
+        if intent is not None:
+            metadata["regulatory_intent"] = clean_text(intent.text)
+
         return metadata
 
     def extract_text_with_context(element) -> str:
@@ -235,6 +256,14 @@ def process_agencies():
                         # Create embedding
                         embedding = model.encode(chunk_text)
 
+                        # Generate embeddings for additional metadata fields
+                        cross_references_embedding = model.encode(" ".join(section_metadata.get("cross_references", [])))
+                        definitions_embedding = model.encode(" ".join(section_metadata.get("definitions", [])))
+                        authority_embedding = model.encode(" ".join(section_metadata.get("enforcement_agencies", [])))
+
+                        # Merge metadata embeddings with the main text embedding
+                        enriched_embedding = np.concatenate([embedding, cross_references_embedding, definitions_embedding, authority_embedding])
+
                         # Create database record
                         chunk_record = RegulationChunk(
                             agency=agency_name,
@@ -243,7 +272,7 @@ def process_agencies():
                             date=date,
                             chunk_text=chunk_text,
                             chunk_index=chunk_index,
-                            embedding=embedding.tobytes(),
+                            embedding=enriched_embedding.tobytes(),
                             section=section_metadata.get("section"),
                             hierarchy=section_metadata.get("hierarchy"),
                         )
