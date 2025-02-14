@@ -1,0 +1,18 @@
+chunker:
+  max_chunk_length: 1000
+  xml_tag_depth: .//DIV8
+database:
+  batch_size: 100
+  db_url: sqlite:///data/db/regulation_embeddings.db
+embedder:
+  # model_name: "models/fine_tuned"
+  batch_size: 32
+  device: null
+  model_name: all-MiniLM-L6-v2
+processing:
+  data_dir: data/agencies
+  log_file: data/logs/embed_regulations.log
+  xml_pattern: '*/xml/*.xml'
+vector_store:
+  collection_name: regulations
+  persist_directory: data/chroma

@@ -5,6 +5,7 @@ rich>=13.7.0
 # Data processing
 pandas>=2.1.0
 sqlalchemy>=2.0.0
+h5py>=3.10.0  # For HDF5 storage
 
 # Text analysis
 textstat>=0.7.3
@@ -20,3 +21,11 @@ tqdm>=4.66.0         # For progress bars
 
 # App
 streamlit>=1.29.0
+
+# XML Processing
+lxml>=4.9.0
+
+# Embeddings and Vector Search
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4  # Explicitly using CPU version
+pinecone-client>=2.2.0  # For vector database service
