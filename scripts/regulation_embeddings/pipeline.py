@@ -15,7 +15,7 @@ from .config import Config
 from .embedders import SentenceTransformerEmbedder
 from .storage import DatabaseManager
 from .vector_store_base import VectorStore
-from .vector_stores import ChromaStore
+from .vector_stores import FaissStore
 
 
 def extract_metadata(filename: str) -> Tuple[str, str, str]:
@@ -151,12 +151,11 @@ class RegulationProcessor:
         )
 
     def _setup_vector_store(self) -> Optional[VectorStore]:
-        """Set up ChromaDB vector store."""
+        """Set up FAISS vector store."""
         vector_store_config = self.config.vector_store
 
-        return ChromaStore(
-            collection_name=vector_store_config.collection_name,
-            persist_directory=vector_store_config.persist_directory,
+        return FaissStore(
+            dimension=384  # dimension for all-MiniLM-L6-v2 model
         )
 
     def process_files_parallel(self, files: List[Path]) -> None:
@@ -273,8 +272,11 @@ class RegulationProcessor:
 
         self.logger.info(f"Storage complete: {stored_chunks} chunks stored, {failed_chunks} chunks failed")
 
-    def process_directory(self, data_dir: Path) -> None:
+    def process_directory(self, data_dir: str) -> None:
         """Process regulation files from directory."""
+        # Convert string to Path if needed
+        data_dir = Path(data_dir) if isinstance(data_dir, str) else data_dir
+
         # Get the latest version of each regulation
         xml_files = get_latest_regulation_files(data_dir)
 
