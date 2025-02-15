@@ -56,6 +56,11 @@ logger = logging.getLogger(__name__)
 def create_db(db_url: str):
     """Create the SQLite database and initialize tables."""
     logger.info("Creating/connecting to database")
+
+    # Create database directory if it doesn't exist
+    db_path = Path(db_url.replace("sqlite:///", ""))
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
     engine = create_engine(db_url)
     Base.metadata.create_all(engine)
     logger.info("Database tables created successfully")
@@ -115,6 +120,35 @@ def chunk_regulation_xml(xml_path: str) -> List[Tuple[str, dict]]:
         hierarchy = section.get("hierarchy_metadata")
         if hierarchy:
             metadata["hierarchy"] = hierarchy
+
+        # Extract additional metadata fields
+        cross_references = section.findall(".//CROSSREF")
+        if cross_references:
+            metadata["cross_references"] = [
+                clean_text(ref.text) for ref in cross_references if ref.text
+            ]
+
+        definitions = section.findall(".//DEF")
+        if definitions:
+            metadata["definitions"] = [
+                clean_text(defn.text) for defn in definitions if defn.text
+            ]
+
+        enforcement_agencies = section.findall(".//ENFORCEMENT")
+        if enforcement_agencies:
+            metadata["enforcement_agencies"] = [
+                clean_text(agency.text)
+                for agency in enforcement_agencies
+                if agency.text
+            ]
+
+        last_revision = section.find(".//LASTREV")
+        if last_revision is not None:
+            metadata["date_of_last_revision"] = clean_text(last_revision.text)
+
+        intent = section.find(".//INTENT")
+        if intent is not None:
+            metadata["regulatory_intent"] = clean_text(intent.text)
 
         return metadata
 
@@ -235,6 +269,27 @@ def process_agencies():
                         # Create embedding
                         embedding = model.encode(chunk_text)
 
+                        # Generate embeddings for additional metadata fields
+                        cross_references_embedding = model.encode(
+                            " ".join(section_metadata.get("cross_references", []))
+                        )
+                        definitions_embedding = model.encode(
+                            " ".join(section_metadata.get("definitions", []))
+                        )
+                        authority_embedding = model.encode(
+                            " ".join(section_metadata.get("enforcement_agencies", []))
+                        )
+
+                        # Merge metadata embeddings with the main text embedding
+                        enriched_embedding = np.concatenate(
+                            [
+                                embedding,
+                                cross_references_embedding,
+                                definitions_embedding,
+                                authority_embedding,
+                            ]
+                        )
+
                         # Create database record
                         chunk_record = RegulationChunk(
                             agency=agency_name,
@@ -243,7 +298,7 @@ def process_agencies():
                             date=date,
                             chunk_text=chunk_text,
                             chunk_index=chunk_index,
-                            embedding=embedding.tobytes(),
+                            embedding=enriched_embedding.tobytes(),
                             section=section_metadata.get("section"),
                             hierarchy=section_metadata.get("hierarchy"),
                         )
@@ -273,12 +328,12 @@ def search_similar_chunks(query_text: str, db_url: str, n_results: int = 5):
     """
     Search for regulation chunks similar to the query text using cosine similarity
     and efficient batch processing.
-    
+
     Args:
         query_text (str): The search query
         db_url (str): Database connection URL
         n_results (int): Number of results to return
-        
+
     Returns:
         list: Top n_results similar chunks with metadata
     """
@@ -295,26 +350,30 @@ def search_similar_chunks(query_text: str, db_url: str, n_results: int = 5):
         # Process chunks in batches to avoid memory issues
         batch_size = 1000
         results = []
-        
+
         # Get total count for progress tracking
         total_chunks = session.query(RegulationChunk).count()
-        
+
         for offset in tqdm(range(0, total_chunks, batch_size), desc="Searching chunks"):
             # Get batch of chunks
-            chunks = session.query(RegulationChunk).offset(offset).limit(batch_size).all()
-            
+            chunks = (
+                session.query(RegulationChunk).offset(offset).limit(batch_size).all()
+            )
+
             # Convert embeddings to numpy array
-            chunk_embeddings = np.vstack([
-                np.frombuffer(chunk.embedding, dtype=np.float32) 
-                for chunk in chunks
-            ])
-            
+            chunk_embeddings = np.vstack(
+                [np.frombuffer(chunk.embedding, dtype=np.float32) for chunk in chunks]
+            )
+
             # Normalize embeddings for cosine similarity
-            chunk_embeddings = chunk_embeddings / np.linalg.norm(chunk_embeddings, axis=1)[:, np.newaxis]
-            
+            chunk_embeddings = (
+                chunk_embeddings
+                / np.linalg.norm(chunk_embeddings, axis=1)[:, np.newaxis]
+            )
+
             # Calculate cosine similarities for the batch
             similarities = np.dot(chunk_embeddings, query_embedding)
-            
+
             # Add results with metadata
             batch_results = [
                 (
@@ -331,9 +390,9 @@ def search_similar_chunks(query_text: str, db_url: str, n_results: int = 5):
                 )
                 for i in range(len(chunks))
             ]
-            
+
             results.extend(batch_results)
-            
+
             # Keep only top n_results so far to save memory
             results.sort(key=lambda x: x[1], reverse=True)
             results = results[:n_results]
@@ -396,25 +455,10 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    # Create a new config object for search
-    config = Config.from_yaml(Path("config/default.yml"))
+    # Comment out or remove these lines
+    # config = Config.from_yaml(Path("config/default.yml"))
+    # query = "What are the three main types of research misconduct according to USDA regulations?"
+    # results = search_similar_chunks(query, config.database.db_url)
 
-    # query = "What are the requirements for privacy act requests?"
-    query = "What are the three main types of research misconduct according to USDA regulations?"
-
-    # Search for similar chunks
-    results = search_similar_chunks(query, config.database.db_url)
-
-    # Save results to file
-    output_file = Path("data/search_results.txt")
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(f"Query: {query}\n\n")
-        for chunk_text, similarity, metadata in results:
-            f.write(f"Similarity: {similarity:.3f}\n")
-            f.write(f"Agency: {metadata['agency']}\n")
-            f.write(f"Title: {metadata['title']}\n")
-            f.write(f"Section: {metadata['section']}\n")
-            f.write("\nFull text:\n")
-            f.write(chunk_text)
-            f.write("\n" + "-" * 80 + "\n\n")
+    # Instead, run the main function to process and embed regulations
+    main()

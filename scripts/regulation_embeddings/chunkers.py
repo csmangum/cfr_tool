@@ -162,6 +162,31 @@ class XMLChunker(BaseChunker):
         if source is not None:
             metadata["source"] = self.clean_text(source.text)
 
+        # Extract cross-references
+        cross_references = element.xpath(".//CROSSREF")
+        if cross_references:
+            metadata["cross_references"] = [self.clean_text(ref.text) for ref in cross_references if ref.text]
+
+        # Extract definitions
+        definitions = element.xpath(".//DEF")
+        if definitions:
+            metadata["definitions"] = [self.clean_text(defn.text) for defn in definitions if defn.text]
+
+        # Extract enforcement agencies
+        enforcement_agencies = element.xpath(".//ENFORCEMENT")
+        if enforcement_agencies:
+            metadata["enforcement_agencies"] = [self.clean_text(agency.text) for agency in enforcement_agencies if agency.text]
+
+        # Extract date of last revision
+        last_revision = element.find(".//LASTREV")
+        if last_revision is not None:
+            metadata["date_of_last_revision"] = self.clean_text(last_revision.text)
+
+        # Extract regulatory intent/purpose
+        intent = element.find(".//INTENT")
+        if intent is not None:
+            metadata["regulatory_intent"] = self.clean_text(intent.text)
+
         return metadata
 
     def iter_chunks(

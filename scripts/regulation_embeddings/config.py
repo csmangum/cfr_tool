@@ -47,8 +47,8 @@ class DatabaseConfig(BaseModel):
 
 class ProcessingConfig(BaseModel):
     """Configuration for regulation processing."""
-    data_dir: str = Field(
-        default="data/agencies",
+    data_dir: Path = Field(
+        default=Path("data/agencies"),
         description="Root directory containing agency data"
     )
     xml_pattern: str = Field(
