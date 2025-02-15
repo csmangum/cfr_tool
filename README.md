@@ -2,6 +2,9 @@
 
 A Python-based tool for downloading, analyzing, and creating semantic search capabilities for federal regulations from the Electronic Code of Federal Regulations (eCFR).
 
+![Analysis Dashboard](docs/images/app.png)
+*Federal Regulations Analysis Dashboard showing word count analysis and agency comparisons*
+
 ## Overview
 
 This pipeline automates the process of:
