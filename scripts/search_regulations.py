@@ -11,11 +11,17 @@ import argparse
 import json
 import random
 import sqlite3
+import warnings
 from pathlib import Path
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
+
+# Add warning filter at the top of the file
+warnings.filterwarnings(
+    "ignore", message=".*Torch was not compiled with flash attention.*"
+)
 
 SAMPLE_QUESTIONS = [
     "What are the requirements for filing a FOIA request?",
@@ -33,6 +39,12 @@ SAMPLE_QUESTIONS = [
     "What are the workplace safety requirements?",
     "How are national parks protected?",
     "What are the rules for federal student loans?",
+    "What are the requirements for exporting goods?",
+    "How are hazardous materials transported?",
+    "What are the rules for using pesticides?",
+    "How are water quality standards set?",
+    "What are the requirements for using pesticides?",
+    "How are water quality standards set?",
 ]
 
 
