@@ -23,12 +23,14 @@ This tool provides an automated pipeline to:
   - Cross-reference embeddings
   - Definition embeddings
   - Authority embeddings
+  - See [Enriched Embeddings Documentation](docs/EnrichedEmbeddings.md)
 - Readability metrics:
   - Flesch Reading Ease
   - Flesch-Kincaid Grade Level
   - Gunning Fog Index
   - SMOG Index
   - And more...
+  - See [Readability Metrics Documentation](docs/ReadabilityMetrics.md)
 - Semantic search capabilities:
   - Natural language queries
   - Similarity-based matching
