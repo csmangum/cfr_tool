@@ -11,13 +11,18 @@ import argparse
 import json
 import random
 import sqlite3
+import warnings
 from pathlib import Path
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-# Add this list of sample questions after the imports
+# Add warning filter at the top of the file
+warnings.filterwarnings(
+    "ignore", message=".*Torch was not compiled with flash attention.*"
+)
+
 SAMPLE_QUESTIONS = [
     "What are the requirements for filing a FOIA request?",
     "Can I destroy a national monument?",
@@ -34,153 +39,174 @@ SAMPLE_QUESTIONS = [
     "What are the workplace safety requirements?",
     "How are national parks protected?",
     "What are the rules for federal student loans?",
+    "What are the requirements for exporting goods?",
+    "How are hazardous materials transported?",
+    "What are the rules for using pesticides?",
+    "How are water quality standards set?",
+    "What are the requirements for using pesticides?",
+    "How are water quality standards set?",
 ]
 
 
-def load_faiss_index(index_path: str) -> faiss.IndexIDMap:
-    """Load the Faiss index from disk."""
-    try:
-        index = faiss.read_index(index_path)
-        print(f"Loaded Faiss index with {index.ntotal} vectors")
-        return index
-    except Exception as e:
-        raise RuntimeError(f"Error loading Faiss index: {e}")
+class RegulationSearcher:
+    def __init__(
+        self, index_path: str, metadata_path: str, db_path: str, model_name: str
+    ):
+        self.index = self._load_faiss_index(index_path)
+        self.metadata = self._load_metadata(metadata_path)
+        self.db_path = db_path
 
+        # Verify database connection and content
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM regulation_chunks")
+                count = cursor.fetchone()[0]
+                print(f"Connected to database. Found {count} regulation chunks")
 
-def load_metadata(metadata_path: str) -> dict:
-    """Load the metadata mapping from JSON file."""
-    try:
-        with open(metadata_path, "r") as f:
-            metadata = json.load(f)
-        print(f"Loaded metadata for {len(metadata)} records")
-        return metadata
-    except Exception as e:
-        raise RuntimeError(f"Error loading metadata: {e}")
+                # Check a sample record
+                cursor.execute(
+                    """
+                    SELECT id, chunk_text 
+                    FROM regulation_chunks 
+                    WHERE chunk_text IS NOT NULL 
+                    LIMIT 1
+                """
+                )
+                sample = cursor.fetchone()
+                if sample:
+                    print(f"Successfully retrieved sample chunk (id: {sample[0]})")
+                else:
+                    print("WARNING: No chunks with text found in database")
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Database connection error: {e}")
 
+        print(f"Loading embedding model: {model_name}")
+        self.model = SentenceTransformer(model_name)
 
-def load_chunk_text(db_path: str, chunk_id: int) -> str:
-    """Load the chunk text from the SQLite database."""
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        chunk_id = int(chunk_id)
-        cursor.execute(
-            "SELECT chunk_text FROM regulation_chunks WHERE id = ?", (chunk_id,)
-        )
-        result = cursor.fetchone()
-        conn.close()
+    @staticmethod
+    def _load_faiss_index(index_path: str) -> faiss.IndexIDMap:
+        if not Path(index_path).exists():
+            raise FileNotFoundError(f"FAISS index not found at {index_path}")
+        try:
+            index = faiss.read_index(index_path)
+            print(f"Loaded Faiss index with {index.ntotal} vectors")
+            return index
+        except Exception as e:
+            raise RuntimeError(f"Error loading Faiss index: {e}")
 
-        if result and result[0]:
-            return result[0].strip()
+    @staticmethod
+    def _load_metadata(metadata_path: str) -> dict:
+        if not Path(metadata_path).exists():
+            raise FileNotFoundError(f"Metadata file not found at {metadata_path}")
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            print(f"Loaded metadata for {len(metadata)} records")
+            return metadata
+        except Exception as e:
+            raise RuntimeError(f"Error loading metadata: {e}")
+
+    def _load_chunk_text(self, chunk_id: int) -> str:
+        """Load chunk text from metadata instead of database."""
+        metadata = self.metadata.get(str(chunk_id))
+        if metadata and "chunk_text" in metadata:
+            return metadata["chunk_text"].strip()
         return "Chunk text not found"
-    except Exception as e:
-        print(f"Error retrieving chunk text for id {chunk_id}: {e}")
-        return f"Error retrieving chunk text: {e}"
 
+    @staticmethod
+    def _format_result(metadata: dict, score: float, chunk_text: str) -> str:
+        agency = metadata.get("agency", "Unknown Agency")
+        title = metadata.get("title", "Unknown Title")
+        chapter = metadata.get("chapter", "Unknown Chapter")
+        section = metadata.get("section", "N/A")
+        date = metadata.get("date", "Unknown Date")
+        return (
+            f"Score: {score:.3f}\n"
+            f"Agency: {agency}\n"
+            f"Title {title}, Chapter {chapter}, Section {section}\n"
+            f"Date: {date}\n\n"
+            f"Text:\n{chunk_text}\n"
+        )
 
-def format_result(metadata: dict, score: float, chunk_text: str) -> str:
-    """Format a search result for display."""
-    agency = metadata.get("agency", "Unknown Agency")
-    title = metadata.get("title", "Unknown Title")
-    chapter = metadata.get("chapter", "Unknown Chapter")
-    section = metadata.get("section", "N/A")
-    date = metadata.get("date", "Unknown Date")
+    def search(self, query: str, n_results: int = 5) -> list:
+        """Search for relevant regulation chunks."""
+        print(f"Processing query: {query}")
 
-    return (
-        f"Score: {score:.3f}\n"
-        f"Agency: {agency}\n"
-        f"Title {title}, Chapter {chapter}, Section {section}\n"
-        f"Date: {date}\n\n"
-        f"Text:\n{chunk_text}\n"
-    )
+        try:
+            # Create query embedding
+            query_embedding = self.model.encode([query])[0].astype(np.float32)
 
+            # Normalize the query embedding to unit length
+            faiss.normalize_L2(query_embedding.reshape(1, -1))
 
-def search_regulations(
-    query: str,
-    index_path: str = "data/faiss/regulation_index.faiss",
-    metadata_path: str = "data/faiss/regulation_metadata.json",
-    db_path: str = "data/db/regulation_embeddings.db",
-    model_name: str = "all-MiniLM-L6-v2",
-    n_results: int = 5,
-    save_results: bool = True,
-) -> list:
-    """
-    Search for regulations similar to the query.
+            # Search the index with increased n_results to account for filtering
+            search_k = min(
+                n_results * 10, self.index.ntotal
+            )  # Search more results initially
+            distances, indices = self.index.search(
+                query_embedding.reshape(1, -1), search_k
+            )
 
-    Args:
-        query: Search query text
-        index_path: Path to Faiss index file
-        metadata_path: Path to metadata JSON file
-        db_path: Path to SQLite database containing chunk text
-        model_name: Name of the sentence transformer model to use
-        n_results: Number of results to return
-        save_results: Whether to save results to a file
+            results = []
+            seen_texts = set()  # To avoid duplicate chunks
 
-    Returns:
-        List of tuples containing (metadata, similarity_score, chunk_text)
-    """
-    # Verify all required files exist
-    for path, desc in [
-        (index_path, "FAISS index"),
-        (metadata_path, "metadata file"),
-        (db_path, "database"),
-    ]:
-        if not Path(path).exists():
-            raise FileNotFoundError(f"{desc} not found at {path}")
+            for distance, idx in zip(distances[0], indices[0]):
+                if idx == -1:  # Skip if no result found
+                    continue
 
-    # Load the index and metadata
-    index = load_faiss_index(index_path)
-    metadata = load_metadata(metadata_path)
+                # Convert distance to cosine similarity score
+                similarity = 1 - (
+                    distance / 2
+                )  # Convert L2 distance to cosine similarity
 
-    # Load the embedding model
-    print(f"Loading embedding model: {model_name}")
-    model = SentenceTransformer(model_name)
+                # Relaxed similarity threshold
+                if similarity < 0.2:  # Lowered from 0.3
+                    continue
 
-    # Create query embedding
-    print(f"Processing query: {query}")
-    query_embedding = model.encode([query])[0]
-    query_embedding = query_embedding.astype(np.float32)
+                # Get metadata for this result
+                result_metadata = self.metadata.get(str(idx))
+                if result_metadata:
+                    chunk_text = self._load_chunk_text(idx)
 
-    # Normalize the query embedding for cosine similarity
-    faiss.normalize_L2(query_embedding.reshape(1, -1))
+                    # Skip if chunk text is invalid or duplicate
+                    if chunk_text == "Chunk text not found" or chunk_text in seen_texts:
+                        continue
 
-    # Search the index
-    distances, indices = index.search(query_embedding.reshape(1, -1), n_results)
+                    seen_texts.add(chunk_text)
+                    results.append((result_metadata, similarity, chunk_text))
 
-    # Format results
-    results = []
-    for idx, (distance, index) in enumerate(zip(distances[0], indices[0]), 1):
-        if index == -1:  # Faiss returns -1 for padding when there are fewer results
-            continue
+            # Sort results by similarity score in descending order
+            results.sort(key=lambda x: x[1], reverse=True)
 
-        # Convert distance to similarity score (1 - normalized_distance)
-        similarity = 1 - (distance / 2)  # Assuming normalized vectors
+            # Trim to requested number of results
+            results = results[:n_results]
 
-        # Get metadata for this result
-        result_metadata = metadata.get(str(index))  # JSON keys are strings
-        if result_metadata:
-            chunk_text = load_chunk_text(db_path, index)
-            if chunk_text != "Chunk text not found":
-                results.append((result_metadata, similarity, chunk_text))
+            return results
 
-    # Save results if requested
-    if save_results:
-        output_file = Path("data/search_results.txt")
+        except Exception as e:
+            print(f"Error during search: {str(e)}")
+            import traceback
+
+            traceback.print_exc()
+            return []
+
+    def save_results(
+        self, query: str, results: list, output_path: str = "data/search_results.txt"
+    ):
+        output_file = Path(output_path)
         output_file.parent.mkdir(parents=True, exist_ok=True)
-
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(f"Search Query: {query}\n\n")
             f.write(f"Found {len(results)} results:\n\n")
             for idx, (metadata, score, chunk_text) in enumerate(results, 1):
                 f.write(f"Result {idx}:\n")
-                f.write(format_result(metadata, score, chunk_text))
+                f.write(self._format_result(metadata, score, chunk_text))
                 f.write("-" * 80 + "\n\n")
-        print(f"\nResults saved to {output_file}")
-
-    return results
+        print(f"Results saved to {output_file}")
 
 
-def main():
+def parse_args():
     parser = argparse.ArgumentParser(
         description="Search regulations using semantic similarity."
     )
@@ -214,20 +240,24 @@ def main():
     parser.add_argument(
         "--num-results", type=int, default=5, help="Number of results to return"
     )
-    args = parser.parse_args()
+    parser.add_argument("--save", action="store_true", help="Save results to a file")
+    return parser.parse_args()
 
-    # Load resources once at startup
-    print(f"Loading embedding model: {args.model}")
-    model = SentenceTransformer(args.model)
 
-    index = load_faiss_index(args.index)
-    metadata = load_metadata(args.metadata)
+def main():
+    args = parse_args()
 
-    # Get initial query from command line args
+    # Initialize searcher (loads model, index, and metadata once)
+    searcher = RegulationSearcher(
+        index_path=args.index,
+        metadata_path=args.metadata,
+        db_path=args.db,
+        model_name=args.model,
+    )
+
+    # Interactive loop: use provided query or prompt the user repeatedly.
     query = args.query
-
     while True:
-        # If no query, ask for input
         if not query:
             query = input(
                 "\nEnter your search query (press Enter for a random question, 'quit' to exit): "
@@ -239,54 +269,23 @@ def main():
                 print(f"\nUsing random question: {query}")
 
         try:
-            # Create query embedding
-            print(f"Processing query: {query}")
-            query_embedding = model.encode([query])[0]
-            query_embedding = query_embedding.astype(np.float32)
-
-            # Normalize the query embedding for cosine similarity
-            faiss.normalize_L2(query_embedding.reshape(1, -1))
-
-            # Search the index
-            distances, indices = index.search(
-                query_embedding.reshape(1, -1), args.num_results
-            )
-
-            # Format results
-            results = []
-            for idx, (distance, index_id) in enumerate(
-                zip(distances[0], indices[0]), 1
-            ):
-                if (
-                    index_id == -1
-                ):  # Faiss returns -1 for padding when there are fewer results
-                    continue
-
-                # Convert distance to similarity score (1 - normalized_distance)
-                similarity = 1 - (distance / 2)  # Assuming normalized vectors
-
-                # Get metadata for this result
-                result_metadata = metadata.get(str(index_id))  # JSON keys are strings
-                if result_metadata:
-                    chunk_text = load_chunk_text(args.db, index_id)
-                    if chunk_text != "Chunk text not found":
-                        results.append((result_metadata, similarity, chunk_text))
-
-            # Print results
+            results = searcher.search(query, n_results=args.num_results)
             print(f"\nSearch Query: {query}\n")
             print(f"Found {len(results)} results:\n")
-
             for idx, (metadata_item, score, chunk_text) in enumerate(results, 1):
                 print(f"Result {idx}:")
-                print(format_result(metadata_item, score, chunk_text))
+                print(
+                    RegulationSearcher._format_result(metadata_item, score, chunk_text)
+                )
                 print("-" * 80 + "\n")
+
+            if args.save:
+                searcher.save_results(query, results)
 
         except Exception as e:
             print(f"Error performing search: {e}")
-            return 1
 
-        # Reset query for next iteration
-        query = None
+        query = None  # Reset query for next iteration
 
     return 0
 

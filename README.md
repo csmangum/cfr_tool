@@ -8,6 +8,7 @@ This tool provides an automated pipeline to:
 1. Download regulations from the eCFR API
 2. Process and analyze text metrics (readability, complexity, etc.)
 3. Generate visualizations and statistical summaries
+4. Search regulations using semantic similarity
 
 ## Features
 
@@ -18,6 +19,10 @@ This tool provides an automated pipeline to:
   - Gunning Fog Index
   - SMOG Index
   - And more...
+- Semantic search capabilities:
+  - Natural language queries
+  - Similarity-based matching
+  - Relevant regulation retrieval
 - Generates visualizations and statistical reports
 - Progress tracking with rich console interface
 - Automated data organization and storage
@@ -46,6 +51,23 @@ The tool will:
 2. Process and analyze text metrics
 3. Generate visualizations and statistics
 
+### Searching Regulations
+
+Search through regulations using natural language queries:
+
+```bash
+# Basic search
+python scripts/search_regulations.py "What are the requirements for filing a FOIA request?"
+
+# Interactive mode
+python scripts/search_regulations.py
+
+# Save results to file
+python scripts/search_regulations.py --save "How are endangered species protected?"
+```
+
+See [Search Documentation](docs/Search.mdx) for detailed information about the search functionality.
+
 ## Output
 
 Generated files will be organized in the following directories:
@@ -53,6 +75,7 @@ Generated files will be organized in the following directories:
 - `data/stats/` - Statistical summaries
 - `data/logs/` - Processing logs
 - `data/db/` - Database files
+- `data/faiss/` - Search index and metadata
 
 ## Project Structure
 
@@ -62,11 +85,16 @@ cfr_tool/
 ├── get_data.py         # eCFR data downloading functionality
 ├── process_data.py     # Text processing and metrics calculation
 ├── visualize_metrics.py # Data visualization and reporting
+├── scripts/
+│   ├── search_regulations.py    # Semantic search functionality
+│   ├── export_to_faiss.py      # Search index creation
+│   └── regulation_embeddings/   # Embedding utilities
 └── data/               # Generated data and output files
     ├── logs/           # Processing logs
     ├── db/            # SQLite database
     ├── plots/         # Generated visualizations
-    └── stats/         # Statistical summaries
+    ├── stats/         # Statistical summaries
+    └── faiss/         # Search indices and metadata
 ```
 
 ## Dependencies
@@ -77,3 +105,5 @@ cfr_tool/
 - pandas - For data processing
 - matplotlib/seaborn - For visualization
 - SQLAlchemy - For database operations
+- sentence-transformers - For text embeddings
+- faiss-cpu - For similarity search
