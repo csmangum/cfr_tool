@@ -20,9 +20,9 @@ This tool provides an automated pipeline to:
   - See [Chunking Documentation](docs/Chunking.md)
 - Enriched embeddings with metadata:
   - Base text embeddings
-  - Cross-reference embeddings
-  - Definition embeddings
-  - Authority embeddings
+  - Cross-reference embeddings [PLANNED]
+  - Definition embeddings [PLANNED]
+  - Authority embeddings [PLANNED]
   - See [Enriched Embeddings Documentation](docs/EnrichedEmbeddings.md)
 - Readability metrics:
   - Flesch Reading Ease
