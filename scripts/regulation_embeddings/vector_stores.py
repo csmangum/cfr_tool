@@ -13,25 +13,18 @@ from .vector_store_base import VectorStore
 class FaissStore(VectorStore):
     """FAISS-based vector store implementation."""
     
-    def __init__(self, dimension: int = None):
-        """
-        Initialize FAISS store.
-        
-        Args:
-            dimension: Dimension of vectors to be stored. Required when creating new index.
-        """
+    def __init__(self, dimension: int = 1536):  # Updated: 384 * 4 for enriched embeddings
+        """Initialize FAISS store with dimension for enriched embeddings."""
         self.logger = logging.getLogger(__name__)
         self.index = None
-        self.metadata = {}  # Store metadata separately since FAISS only stores vectors
+        self.metadata = {}
         
         if dimension is not None:
-            # Initialize a new FAISS index
-            # Using IndexFlatL2 for exact search with L2 distance
+            # Initialize a new FAISS index with the enriched dimension size
             base_index = faiss.IndexFlatL2(dimension)
-            # Wrap with IndexIDMap to store the association between vectors and their IDs
             self.index = faiss.IndexIDMap(base_index)
             
-            self.logger.info(f"Initialized FAISS store with dimension {dimension}")
+            self.logger.info(f"Initialized FAISS store with enriched dimension {dimension}")
     
     def add_vectors(self, vectors: np.ndarray, metadata: List[Dict]) -> None:
         """

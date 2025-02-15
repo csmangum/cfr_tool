@@ -12,11 +12,15 @@ import json
 import random
 import sqlite3
 import warnings
+from functools import lru_cache
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
+
+from scripts.regulation_embeddings.models import RegulationChunk
 
 # Add warning filter at the top of the file
 warnings.filterwarnings(
@@ -52,9 +56,14 @@ class RegulationSearcher:
     def __init__(
         self, index_path: str, metadata_path: str, db_path: str, model_name: str
     ):
-        self.index = self._load_faiss_index(index_path)
+        self.index = self._configure_index(self._load_faiss_index(index_path))
         self.metadata = self._load_metadata(metadata_path)
         self.db_path = db_path
+        self._cache = {}
+        self.model = SentenceTransformer(model_name)
+
+        # Initialize zero vectors for empty metadata fields
+        self.zero_vector = np.zeros(384)  # Base embedding dimension
 
         # Verify database connection and content
         try:
@@ -81,9 +90,6 @@ class RegulationSearcher:
         except sqlite3.Error as e:
             raise RuntimeError(f"Database connection error: {e}")
 
-        print(f"Loading embedding model: {model_name}")
-        self.model = SentenceTransformer(model_name)
-
     @staticmethod
     def _load_faiss_index(index_path: str) -> faiss.IndexIDMap:
         if not Path(index_path).exists():
@@ -107,8 +113,9 @@ class RegulationSearcher:
         except Exception as e:
             raise RuntimeError(f"Error loading metadata: {e}")
 
+    @lru_cache(maxsize=1000)
     def _load_chunk_text(self, chunk_id: int) -> str:
-        """Load chunk text from metadata instead of database."""
+        """Load chunk text with caching."""
         metadata = self.metadata.get(str(chunk_id))
         if metadata and "chunk_text" in metadata:
             return metadata["chunk_text"].strip()
@@ -129,66 +136,61 @@ class RegulationSearcher:
             f"Text:\n{chunk_text}\n"
         )
 
-    def search(self, query: str, n_results: int = 5) -> list:
-        """Search for relevant regulation chunks."""
+    def _enrich_query_embedding(self, query: str) -> np.ndarray:
+        """Create enriched query embedding to match document embeddings."""
+        # Get base query embedding
+        query_embedding = self.model.encode(query, normalize_embeddings=True)
+
+        # Add zero vectors for metadata fields since query doesn't have metadata
+        enriched_embedding = np.concatenate(
+            [
+                query_embedding,
+                self.zero_vector,  # cross_references - allows matching similar regulations
+                self.zero_vector,  # definitions
+                self.zero_vector,  # authority
+            ]
+        )
+
+        # Normalize final embedding
+        return enriched_embedding / np.linalg.norm(enriched_embedding)
+
+    def search(self, query: str, n_results: int = 5, batch_size: int = 32) -> list:
+        """Search for relevant regulation chunks using enriched embeddings."""
         print(f"Processing query: {query}")
 
         try:
-            # Create query embedding
-            query_embedding = self.model.encode([query])[0].astype(np.float32)
+            # Create enriched query embedding that includes metadata concepts
+            query_embedding = self._enrich_query_embedding(query)
 
-            # Normalize the query embedding to unit length
-            faiss.normalize_L2(query_embedding.reshape(1, -1))
-
-            # Search the index with increased n_results to account for filtering
-            search_k = min(
-                n_results * 10, self.index.ntotal
-            )  # Search more results initially
+            # Search with expanded results for filtering
             distances, indices = self.index.search(
-                query_embedding.reshape(1, -1), search_k
+                query_embedding.reshape(1, -1), n_results * 2
             )
 
             results = []
-            seen_texts = set()  # To avoid duplicate chunks
+            seen_texts = set()
 
             for distance, idx in zip(distances[0], indices[0]):
-                if idx == -1:  # Skip if no result found
+                if idx == -1 or distance < 0.2:  # Early filtering
                     continue
 
-                # Convert distance to cosine similarity score
-                similarity = 1 - (
-                    distance / 2
-                )  # Convert L2 distance to cosine similarity
-
-                # Relaxed similarity threshold
-                if similarity < 0.2:  # Lowered from 0.3
-                    continue
-
-                # Get metadata for this result
                 result_metadata = self.metadata.get(str(idx))
-                if result_metadata:
-                    chunk_text = self._load_chunk_text(idx)
+                if not result_metadata:
+                    continue
 
-                    # Skip if chunk text is invalid or duplicate
-                    if chunk_text == "Chunk text not found" or chunk_text in seen_texts:
-                        continue
+                chunk_text = self._load_chunk_text(idx)
+                if chunk_text == "Chunk text not found" or chunk_text in seen_texts:
+                    continue
 
-                    seen_texts.add(chunk_text)
-                    results.append((result_metadata, similarity, chunk_text))
+                seen_texts.add(chunk_text)
+                results.append((result_metadata, 1 / (1 + distance), chunk_text))
 
-            # Sort results by similarity score in descending order
+            # Sort by similarity score and return top results
             results.sort(key=lambda x: x[1], reverse=True)
-
-            # Trim to requested number of results
-            results = results[:n_results]
-
-            return results
+            return results[:n_results]
 
         except Exception as e:
             print(f"Error during search: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
             return []
 
     def save_results(
@@ -204,6 +206,67 @@ class RegulationSearcher:
                 f.write(self._format_result(metadata, score, chunk_text))
                 f.write("-" * 80 + "\n\n")
         print(f"Results saved to {output_file}")
+
+    def _configure_index(self, index: faiss.IndexIDMap) -> faiss.IndexIDMap:
+        """Configure Faiss index for optimal performance."""
+        # Enable internal multithreading
+        faiss.omp_set_num_threads(4)
+        return index
+
+    def search_similar(
+        self,
+        query_embedding: np.ndarray,
+        n_results: int = 5,
+        filters: Optional[Dict] = None,
+    ) -> List[Tuple[str, float, Dict]]:
+        """Search for similar chunks with optional filtering."""
+        # If vector store is available, use it for similarity search
+        if self.vector_store is not None:
+            results = self.vector_store.search(query_embedding, k=n_results)
+            return [(meta["chunk_text"], score, meta) for score, meta in results]
+
+        # Fallback to database search
+        session = self.Session()
+        try:
+            # Build query with filters
+            query = session.query(RegulationChunk)
+            if filters:
+                for field, value in filters.items():
+                    if hasattr(RegulationChunk, field):
+                        query = query.filter(getattr(RegulationChunk, field) == value)
+
+            results = []
+            # Calculate similarities
+            for chunk in query.all():
+                chunk_embedding = np.frombuffer(chunk.embedding, dtype=np.float32)
+                similarity = np.dot(query_embedding, chunk_embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(chunk_embedding)
+                )
+
+                # Deserialize hierarchy when returning results
+                hierarchy = self._deserialize_metadata(chunk.hierarchy)
+
+                results.append(
+                    (
+                        chunk.chunk_text,
+                        similarity,
+                        {
+                            "agency": chunk.agency,
+                            "title": chunk.title,
+                            "chapter": chunk.chapter,
+                            "date": chunk.date,
+                            "section": chunk.section,
+                            "hierarchy": hierarchy,
+                        },
+                    )
+                )
+
+            # Sort by similarity and return top n_results
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:n_results]
+        except Exception as e:
+            print(f"Error during similar search: {str(e)}")
+            return []
 
 
 def parse_args():

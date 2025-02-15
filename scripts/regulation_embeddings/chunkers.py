@@ -130,16 +130,23 @@ class XMLChunker(BaseChunker):
         return hierarchy
 
     def extract_section_metadata(self, element: etree._Element) -> Dict:
-        """
-        Extract comprehensive metadata from a section element.
-
-        Args:
-            element: XML element representing a section
-
-        Returns:
-            dict: Section metadata
-        """
+        """Extract metadata from a section element."""
         metadata = {"hierarchy": self.extract_hierarchy_metadata(element)}
+
+        # Extract cross-references
+        cross_references = element.xpath(".//CROSSREF")
+        if cross_references:
+            metadata["cross_references"] = [self.clean_text(ref.text) for ref in cross_references if ref.text]
+
+        # Extract definitions
+        definitions = element.xpath(".//DEF")
+        if definitions:
+            metadata["definitions"] = [self.clean_text(defn.text) for defn in definitions if defn.text]
+
+        # Extract enforcement agencies
+        enforcement_agencies = element.xpath(".//ENFORCEMENT")
+        if enforcement_agencies:
+            metadata["enforcement_agencies"] = [self.clean_text(agency.text) for agency in enforcement_agencies if agency.text]
 
         # Extract section number and title
         head = element.find("HEAD")
@@ -161,21 +168,6 @@ class XMLChunker(BaseChunker):
         source = element.find(".//SOURCE")
         if source is not None:
             metadata["source"] = self.clean_text(source.text)
-
-        # Extract cross-references
-        cross_references = element.xpath(".//CROSSREF")
-        if cross_references:
-            metadata["cross_references"] = [self.clean_text(ref.text) for ref in cross_references if ref.text]
-
-        # Extract definitions
-        definitions = element.xpath(".//DEF")
-        if definitions:
-            metadata["definitions"] = [self.clean_text(defn.text) for defn in definitions if defn.text]
-
-        # Extract enforcement agencies
-        enforcement_agencies = element.xpath(".//ENFORCEMENT")
-        if enforcement_agencies:
-            metadata["enforcement_agencies"] = [self.clean_text(agency.text) for agency in enforcement_agencies if agency.text]
 
         # Extract date of last revision
         last_revision = element.find(".//LASTREV")

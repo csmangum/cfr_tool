@@ -49,49 +49,39 @@ class EmbeddingVisualizer:
             session.close()
 
     def plot_embeddings(self, output_path: Path = None):
-        """Create PCA visualization of embeddings colored by agency."""
-        # Get embeddings and metadata
+        """Create visualization of embeddings with metadata components."""
         embeddings, metadata = self.get_embeddings_and_metadata()
         
-        # Perform PCA
-        pca = PCA(n_components=2)
-        embeddings_2d = pca.fit_transform(embeddings)
+        # Split enriched embeddings into components
+        base_embeddings = embeddings[:, :384]
+        cross_refs_embeddings = embeddings[:, 384:768]
+        definitions_embeddings = embeddings[:, 768:1152]
+        authority_embeddings = embeddings[:, 1152:]
         
-        # Get unique agencies and assign colors
-        agencies = list(set(m['agency'] for m in metadata))
-        color_palette = sns.color_palette('husl', n_colors=len(agencies))
-        agency_to_color = dict(zip(agencies, color_palette))
+        # Create separate PCA visualizations for each component
+        components = [
+            ("Base Text", base_embeddings),
+            ("Cross References", cross_refs_embeddings),
+            ("Definitions", definitions_embeddings),
+            ("Authority", authority_embeddings)
+        ]
         
-        # Create plot
-        plt.figure(figsize=(12, 8))
+        fig, axes = plt.subplots(2, 2, figsize=(20, 20))
+        axes = axes.ravel()
         
-        # Plot points
-        for agency in agencies:
-            mask = [m['agency'] == agency for m in metadata]
-            agency_points = embeddings_2d[mask]
+        for ax, (name, component_embeddings) in zip(axes, components):
+            pca = PCA(n_components=2)
+            reduced = pca.fit_transform(component_embeddings)
             
-            plt.scatter(
-                agency_points[:, 0],
-                agency_points[:, 1],
-                c=[agency_to_color[agency]],
-                label=agency,
-                alpha=0.6
-            )
+            # Plot points colored by agency
+            for agency in set(m['agency'] for m in metadata):
+                mask = [m['agency'] == agency for m in metadata]
+                ax.scatter(reduced[mask, 0], reduced[mask, 1], 
+                          alpha=0.6, label=agency)
+            
+            ax.set_title(f"{name} Embeddings")
         
-        # Customize plot
-        plt.title('Regulation Embeddings by Agency (PCA)')
-        plt.xlabel(f'PC1 (Variance Explained: {pca.explained_variance_ratio_[0]:.2%})')
-        plt.ylabel(f'PC2 (Variance Explained: {pca.explained_variance_ratio_[1]:.2%})')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()
-        
-        # Save or show plot
         if output_path:
-            plt.savefig(output_path, bbox_inches='tight', dpi=300)
-            self.logger.info(f"Plot saved to {output_path}")
-        else:
-            plt.show()
-        
-        plt.close()
-
-        return embeddings_2d, pca.explained_variance_ratio_ 
+            plt.savefig(output_path)
+        plt.close() 

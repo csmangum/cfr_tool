@@ -198,7 +198,7 @@ class RegulationProcessor:
                     metadata_groups = [metadata for _, metadata in chunk_results]
 
                     # Step 2: Batch embedding
-                    self.logger.info(f"Generating embeddings for {len(chunk_groups)} files")
+                    self.logger.info(f"Generating enriched embeddings for {len(chunk_groups)} files")
                     embeddings_groups = self._batch_embed_chunks(chunk_groups)
 
                     # Step 3: Batch storage
@@ -218,19 +218,25 @@ class RegulationProcessor:
             for file in failed_files:
                 self.logger.warning(f"  {file}")
 
-    def _batch_embed_chunks(
-        self, chunk_groups: List[List[Tuple[str, Dict]]]
-    ) -> List[np.ndarray]:
-        """Generate embeddings for multiple groups of chunks in batches."""
+    def _batch_embed_chunks(self, chunk_groups: List[List[Tuple[str, Dict]]]) -> List[np.ndarray]:
+        """Generate enriched embeddings for multiple groups of chunks in batches."""
         all_embeddings = []
 
-        for chunks in tqdm(chunk_groups, desc="Generating embeddings"):
+        for chunks in tqdm(chunk_groups, desc="Generating enriched embeddings"):
             try:
-                chunk_texts = [chunk[0] for chunk in chunks]
-                embeddings = self.embedder.embed_chunks(chunk_texts)
-                all_embeddings.append(embeddings)
+                # Process each chunk with its metadata
+                batch_embeddings = []
+                for chunk_text, metadata in chunks:
+                    enriched_embedding = self.embedder.embed_text_with_metadata(
+                        text=chunk_text,
+                        metadata=metadata
+                    )
+                    batch_embeddings.append(enriched_embedding)
+
+                all_embeddings.append(np.vstack(batch_embeddings))
+
             except Exception as e:
-                self.logger.error(f"Error generating embeddings: {str(e)}")
+                self.logger.error(f"Error generating enriched embeddings: {str(e)}")
                 raise
 
         return all_embeddings
