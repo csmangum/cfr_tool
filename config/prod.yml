@@ -1,0 +1,15 @@
+embedder:
+  model_name: "all-mpnet-base-v2"  # More accurate but slower model
+  batch_size: 64
+  device: "cuda"  # Use GPU in production
+
+database:
+  db_url: "postgresql://user:pass@localhost/regulations"
+  batch_size: 1000 
+
+vector_store:
+  type: "pinecone"
+  dimension: 768  # Matches mpnet embedding dimension
+  api_key: "${PINECONE_API_KEY}"  # Use environment variable
+  environment: "us-west1-gcp"
+  index_name: "regulations" 

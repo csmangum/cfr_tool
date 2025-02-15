@@ -1,0 +1,4 @@
+chunker:
+  max_chunk_length: 1500
+  min_chunk_length: 150
+  xml_tag_depth: ".//DIV6"  # Chunk at subsection level 
