@@ -2,7 +2,7 @@
 
 This document describes the interactive web applications for analyzing and searching federal regulations.
 
-![Analysis Dashboard](../images/app.png)
+![Analysis Dashboard](../docs/images/app.png)
 *Federal Regulations Analysis Dashboard showing word count analysis and agency comparisons*
 
 ## Overview
@@ -77,7 +77,7 @@ streamlit run streamlit_app.py
 
 ## Semantic Search Interface
 
-![Search Interface](../images/search.png)
+![Search Interface](../docs/images/search.png)
 *Semantic Search Interface with filtering options and results display*
 
 ### Running the Search Interface
