@@ -1,43 +1,27 @@
 # Regulation Search System
 
-The regulation search system uses semantic search with base text embeddings to find relevant federal regulations based on natural language queries. Future enhancements will add metadata-aware embeddings for richer context.
+The regulation search system uses semantic search with sentence transformer embeddings to find relevant federal regulations based on natural language queries.
 
 ## Architecture
 
 The search system consists of three main components:
 
-1. **Text Embeddings**: Generates semantic vectors from regulation text (384 dimensions)
-2. **Faiss Index**: A vector similarity search index optimized for the embedding vectors
+1. **Text Embeddings**: Generates semantic vectors from regulation text (384 dimensions) using SentenceTransformer
+2. **Faiss Index**: A vector similarity search index optimized for fast similarity search
 3. **SQLite Database**: Stores regulation chunks and metadata
-
-Future enhancements will add:
-- Metadata-enriched embeddings
-- Cross-reference awareness
-- Definition and authority context
 
 ```mermaid
 graph LR
-    A[User Query] --> B[Base Embedding]
-    B --> C[Enriched Vector]
-    M[Metadata Fields] --> C
-    C --> D[Faiss Index]
-    D --> E[Similar Chunks]
-    E --> F[Metadata Filtering]
-    F --> G[Ranked Results]
+    A[User Query] --> B[Query Embedding]
+    B --> C[Faiss Index]
+    C --> D[Similar Chunks]
+    D --> E[Metadata Filtering]
+    E --> F[Ranked Results]
 ```
 
-## Enriched Embeddings
+## Current Implementation
 
-The system uses a composite embedding approach:
-
-- Base text embedding (384d)
-- Cross-references embedding (384d)
-- Definitions embedding (384d)
-- Authority/enforcement embedding (384d)
-
-This creates a 1536-dimensional vector that captures both content and context.
-
-### Example Enriched Search
+The system uses the all-MiniLM-L6-v2 model to generate 384-dimensional embeddings:
 
 ```python
 from scripts.search_regulations import RegulationSearcher
@@ -50,137 +34,132 @@ searcher = RegulationSearcher(
     model_name="all-MiniLM-L6-v2"
 )
 
-# Search with metadata filtering
-results = searcher.search_similar(
-    query_embedding,
-    filters={
-        "agency": "agriculture-department",
-        "date": "2015-01-01"  # Only regulations after 2015
-    }
+# Search regulations
+results = searcher.search(
+    query="What are the requirements for filing a FOIA request?",
+    n_results=5
 )
 ```
 
 ## Search Features
 
-### 1. Metadata-Aware Search
-- Matches on related regulations through cross-references
-- Understands defined terms and their relationships
-- Considers enforcement context and authority
+### 1. Semantic Search
+- Uses sentence transformer embeddings for semantic understanding
+- Matches based on meaning rather than just keywords
+- Handles natural language queries effectively
 
-### 2. Structured Filtering
-- Agency-specific search
-- Date range filtering
-- Section and chapter filtering
-- Hierarchical navigation
+### 2. Metadata Storage
+- Agency information
+- Title and chapter numbers
+- Section numbers
+- Publication dates
+- Document hierarchy
 
-### 3. Smart Ranking
-- Combines text similarity with metadata relevance
-- Deduplicates similar content
-- Preserves regulatory context
+### 3. Result Ranking
+- Similarity scores based on cosine similarity
+- Deduplication of similar content
 - Minimum similarity threshold (0.2)
+- Returns top N most relevant results
 
-## Example Searches
+## Example Usage
 
-### Cross-Reference Aware Search
-```
-Query: "Cotton classification requirements"
-
-Result 1:
-Score: 0.892
-Agency: Department of Agriculture
-Text: "Requirements for cotton classification..."
-Cross-References: ["7 CFR 28.8", "7 CFR 28.9"]
-
-Result 2: 
-Score: 0.857
-Agency: Department of Agriculture
-Text: "Related cotton standards..."
-From Cross-Reference: "7 CFR 28.8"
-```
-
-### Definition-Enhanced Search
-```
-Query: "Micronaire requirements"
-
-Result 1:
-Score: 0.878
-Agency: Department of Agriculture
-Text: "Cotton classification standards..."
-Definitions: {
-    "Micronaire": "A measure of cotton fiber fineness..."
-}
-```
-
-## Command Line Usage
-
+### Command Line Interface
 ```bash
-# Basic search
+# Basic search with default parameters
 python scripts/search_regulations.py "FOIA request requirements"
 
-# Agency-specific search
-python scripts/search_regulations.py --agency "agriculture-department" "cotton standards"
+# Specify number of results
+python scripts/search_regulations.py --num-results 10 "drone regulations"
 
-# Date-filtered search
-python scripts/search_regulations.py --after "2015-01-01" "drone regulations"
+# Save results to file
+python scripts/search_regulations.py --save "workplace safety requirements"
+```
+
+### Interactive Mode
+```bash
+python scripts/search_regulations.py
+# Enter queries interactively
+# Press Enter for random sample questions
+# Type 'quit' to exit
+```
+
+### Streamlit Interface
+```bash
+streamlit run scripts/streamlit_search.py
 ```
 
 ## Performance Optimizations
 
-The system uses several optimizations:
+The system implements several optimizations:
 
 1. **Vector Search**
-   - FAISS index for fast similarity search
-   - Batch processing of queries
+   - FAISS IndexIDMap with FlatL2 base
+   - Efficient similarity computations
    - Multi-threaded search (4 threads)
 
-2. **Metadata Handling**
-   - Cached metadata lookups
-   - Pre-computed enriched embeddings
-   - Efficient filtering
-
-3. **Result Processing**
+2. **Result Processing**
+   - LRU cache for chunk text (1000 entries)
    - Early similarity filtering
-   - Duplicate removal
-   - Batch result formatting
+   - Efficient deduplication
+
+3. **Database Access**
+   - SQLite for metadata storage
+   - Batch processing where applicable
+   - Connection pooling
 
 ## Implementation Details
 
-The enriched embedding process:
+The search process:
 
 ```python
-# Generate base embedding
-text_embedding = model.encode(text)
+def search(self, query: str, n_results: int = 5) -> list:
+    """Search for relevant regulation chunks."""
+    # Create query embedding
+    query_embedding = self._enrich_query_embedding(query)
 
-# Generate metadata embeddings
-cross_refs_embedding = model.encode(cross_references)
-definitions_embedding = model.encode(definitions)
-authority_embedding = model.encode(authority)
+    # Search with expanded results for filtering
+    distances, indices = self.index.search(
+        query_embedding.reshape(1, -1), 
+        n_results * 2
+    )
 
-# Combine embeddings
-enriched_embedding = np.concatenate([
-    text_embedding,
-    cross_refs_embedding,
-    definitions_embedding,
-    authority_embedding
-])
+    results = []
+    seen_texts = set()
 
-# Normalize final vector
-enriched_embedding = enriched_embedding / np.linalg.norm(enriched_embedding)
+    # Process and filter results
+    for distance, idx in zip(distances[0], indices[0]):
+        if idx == -1 or distance < 0.2:  # Early filtering
+            continue
+
+        result_metadata = self.metadata.get(str(idx))
+        if not result_metadata:
+            continue
+
+        chunk_text = self._load_chunk_text(idx)
+        if chunk_text in seen_texts:
+            continue
+
+        seen_texts.add(chunk_text)
+        results.append((result_metadata, 1/(1 + distance), chunk_text))
+
+    # Sort by similarity score
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results[:n_results]
 ```
 
 ## Future Enhancements
 
-1. **Search Capabilities**
-   - Boolean query support
-   - Temporal awareness
-   - Agency relationship mapping
+1. **Metadata-Enriched Embeddings**
+   - Add cross-reference awareness
+   - Include definition context
+   - Incorporate authority information
 
-2. **Performance**
+2. **Search Capabilities**
+   - Agency-specific filtering
+   - Date range filtering
+   - Boolean query support
+
+3. **Performance**
    - GPU acceleration
    - Distributed search
-   - Dynamic batch sizing
-
-3. **Metadata Integration**
-   - Enhanced cross-reference tracking
-   - Regulatory amendment history
-   - Agency jurisdiction mapping
+   - Improved caching strategies
