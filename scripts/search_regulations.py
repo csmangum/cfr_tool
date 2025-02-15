@@ -13,6 +13,7 @@ import random
 import sqlite3
 import warnings
 from pathlib import Path
+from functools import lru_cache
 
 import faiss
 import numpy as np
@@ -52,9 +53,10 @@ class RegulationSearcher:
     def __init__(
         self, index_path: str, metadata_path: str, db_path: str, model_name: str
     ):
-        self.index = self._load_faiss_index(index_path)
+        self.index = self._configure_index(self._load_faiss_index(index_path))
         self.metadata = self._load_metadata(metadata_path)
         self.db_path = db_path
+        self._cache = {}
 
         # Verify database connection and content
         try:
@@ -107,8 +109,9 @@ class RegulationSearcher:
         except Exception as e:
             raise RuntimeError(f"Error loading metadata: {e}")
 
+    @lru_cache(maxsize=1000)
     def _load_chunk_text(self, chunk_id: int) -> str:
-        """Load chunk text from metadata instead of database."""
+        """Load chunk text with caching."""
         metadata = self.metadata.get(str(chunk_id))
         if metadata and "chunk_text" in metadata:
             return metadata["chunk_text"].strip()
@@ -129,60 +132,59 @@ class RegulationSearcher:
             f"Text:\n{chunk_text}\n"
         )
 
-    def search(self, query: str, n_results: int = 5) -> list:
+    def search(self, query: str, n_results: int = 5, batch_size: int = 32) -> list:
         """Search for relevant regulation chunks."""
         print(f"Processing query: {query}")
 
         try:
-            # Create query embedding
-            query_embedding = self.model.encode([query])[0].astype(np.float32)
+            # Create query embedding - support for batch queries
+            if isinstance(query, str):
+                queries = [query]
+            else:
+                queries = query
 
-            # Normalize the query embedding to unit length
-            faiss.normalize_L2(query_embedding.reshape(1, -1))
+            # Process in batches for better performance
+            embeddings = []
+            for i in range(0, len(queries), batch_size):
+                batch = queries[i : i + batch_size]
+                batch_embeddings = self.model.encode(batch).astype(np.float32)
+                embeddings.append(batch_embeddings)
 
-            # Search the index with increased n_results to account for filtering
-            search_k = min(
-                n_results * 10, self.index.ntotal
-            )  # Search more results initially
-            distances, indices = self.index.search(
-                query_embedding.reshape(1, -1), search_k
-            )
+            query_embedding = np.vstack(embeddings)
+
+            # Normalize embeddings
+            faiss.normalize_L2(query_embedding)
+
+            # Use inner product (cosine similarity) directly instead of L2 distance conversion
+            distances, indices = self.index.search(query_embedding, n_results * 2)
 
             results = []
-            seen_texts = set()  # To avoid duplicate chunks
+            seen_texts = set()
 
-            for distance, idx in zip(distances[0], indices[0]):
-                if idx == -1:  # Skip if no result found
-                    continue
+            # Process results more efficiently
+            for batch_distances, batch_indices in zip(distances, indices):
+                batch_results = []
 
-                # Convert distance to cosine similarity score
-                similarity = 1 - (
-                    distance / 2
-                )  # Convert L2 distance to cosine similarity
+                for distance, idx in zip(batch_distances, batch_indices):
+                    if idx == -1 or distance < 0.2:  # Early filtering
+                        continue
 
-                # Relaxed similarity threshold
-                if similarity < 0.2:  # Lowered from 0.3
-                    continue
+                    result_metadata = self.metadata.get(str(idx))
+                    if not result_metadata:
+                        continue
 
-                # Get metadata for this result
-                result_metadata = self.metadata.get(str(idx))
-                if result_metadata:
                     chunk_text = self._load_chunk_text(idx)
-
-                    # Skip if chunk text is invalid or duplicate
                     if chunk_text == "Chunk text not found" or chunk_text in seen_texts:
                         continue
 
                     seen_texts.add(chunk_text)
-                    results.append((result_metadata, similarity, chunk_text))
+                    batch_results.append((result_metadata, distance, chunk_text))
 
-            # Sort results by similarity score in descending order
-            results.sort(key=lambda x: x[1], reverse=True)
+                # Sort and trim results per batch
+                batch_results.sort(key=lambda x: x[1], reverse=True)
+                results.extend(batch_results[:n_results])
 
-            # Trim to requested number of results
-            results = results[:n_results]
-
-            return results
+            return results[:n_results]
 
         except Exception as e:
             print(f"Error during search: {str(e)}")
@@ -204,6 +206,12 @@ class RegulationSearcher:
                 f.write(self._format_result(metadata, score, chunk_text))
                 f.write("-" * 80 + "\n\n")
         print(f"Results saved to {output_file}")
+
+    def _configure_index(self, index: faiss.IndexIDMap) -> faiss.IndexIDMap:
+        """Configure Faiss index for optimal performance."""
+        # Enable internal multithreading
+        faiss.omp_set_num_threads(4)
+        return index
 
 
 def parse_args():
