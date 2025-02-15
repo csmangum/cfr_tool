@@ -32,13 +32,14 @@ os.environ.setdefault("FAISS_CPU_ONLY", "1")
 os.environ["TORCH_ALLOW_TF32"] = "1"  # Better performance on Ampere+ GPUs
 
 import numpy as np
-from regulation_embeddings.config import Config
-from regulation_embeddings.models import Base, BaseRegulationChunk
-from regulation_embeddings.pipeline import ProcessingError, RegulationProcessor
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
+
+from scripts.regulation_embeddings.config import Config
+from scripts.regulation_embeddings.models import Base, BaseRegulationChunk
+from scripts.regulation_embeddings.pipeline import ProcessingError, RegulationProcessor
 
 
 def setup_logging(log_file: Path) -> logging.Logger:

@@ -9,18 +9,18 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from scripts.search_regulations import SAMPLE_QUESTIONS, RegulationSearcher
+
 # Add the project root to Python path
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
-from regulation_embeddings.config import Config
-from search_regulations import SAMPLE_QUESTIONS, RegulationSearcher
 
 # Initialize session state
 if "history" not in st.session_state:

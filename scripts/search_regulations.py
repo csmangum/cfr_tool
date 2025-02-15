@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 import faiss
 import numpy as np
-from regulation_embeddings.models import BaseRegulationChunk
+from scripts.regulation_embeddings.models import BaseRegulationChunk
 from sentence_transformers import SentenceTransformer
 
 # Add warning filter at the top of the file
