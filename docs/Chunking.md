@@ -176,3 +176,113 @@ for chunk_text, metadata in chunks:
     print(f"Text length: {len(chunk_text)}")
     print(f"Cross-references: {metadata['cross_references']}")
 ``` 
+
+## Semantic Segmentation
+
+### Overview
+The chunking process now includes semantic segmentation using NLP techniques to enhance the quality of chunked regulatory text. This approach ensures that chunks are semantically coherent and contextually meaningful.
+
+### Components
+
+1. **Sentence Embeddings**
+   - Use Sentence Transformers (e.g., `all-MiniLM-L6-v2`) to generate embeddings for each sentence.
+   - Compute cosine similarity between adjacent sentences to quantify their semantic relationship.
+
+2. **Chunk Boundaries**
+   - Define a threshold (e.g., 0.7): If similarity between two sentences drops below this threshold, insert a segmentation boundary.
+   - Experiment with different thresholds and fine-tune for optimal chunk sizes.
+
+3. **Advanced Techniques**
+   - Optionally, incorporate TextTiling or BERT-based segmentation models for improved topic shift detection.
+
+### Process
+
+1. **Compute Sentence Embeddings**
+```python
+def compute_sentence_embeddings(sentences: List[str]) -> np.ndarray:
+    """Compute sentence embeddings using Sentence Transformers."""
+    return model.encode(sentences, convert_to_numpy=True)
+```
+
+2. **Identify Chunk Boundaries**
+```python
+def identify_chunk_boundaries(sentences: List[str]) -> List[int]:
+    """Identify chunk boundaries based on semantic similarity."""
+    embeddings = compute_sentence_embeddings(sentences)
+    similarities = np.array(
+        [np.dot(embeddings[i], embeddings[i + 1]) / (np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[i + 1]))
+         for i in range(len(embeddings) - 1)]
+    )
+    boundaries = [i + 1 for i, sim in enumerate(similarities) if sim < similarity_threshold]
+    return boundaries
+```
+
+3. **Chunk Formation**
+```python
+def form_chunks(sentences: List[str], boundaries: List[int]) -> List[str]:
+    """Form chunks based on identified boundaries."""
+    chunks = []
+    start = 0
+    for boundary in boundaries:
+        chunk_text = " ".join(sentences[start:boundary])
+        if len(chunk_text) >= min_chunk_length:
+            chunks.append(chunk_text)
+        start = boundary
+    # Add remaining sentences as the last chunk
+    chunk_text = " ".join(sentences[start:])
+    if len(chunk_text) >= min_chunk_length:
+        chunks.append(chunk_text)
+    return chunks
+```
+
+### Example
+
+```python
+# Example sentences
+sentences = [
+    "The regulation requires all manufacturers to maintain records.",
+    "These records must be kept for a minimum of five years.",
+    "Failure to comply with this requirement may result in penalties.",
+    "Penalties include fines and suspension of licenses.",
+    "Manufacturers must also submit annual reports to the agency."
+]
+
+# Compute embeddings and identify boundaries
+embeddings = compute_sentence_embeddings(sentences)
+boundaries = identify_chunk_boundaries(sentences)
+
+# Form chunks
+chunks = form_chunks(sentences, boundaries)
+
+# Output chunks
+for chunk in chunks:
+    print(chunk)
+```
+
+### Benefits
+
+1. **Detection of Natural Topic Boundaries**
+   - By using sentence embeddings and cosine similarity, the system can detect significant topic shifts within the text. This ensures that chunks are created at points where the content naturally changes, leading to more coherent and contextually meaningful chunks.
+
+2. **Reduction of Concept Fragmentation**
+   - Semantic segmentation helps in grouping related sentences together, reducing the chances of splitting key concepts across multiple chunks. This makes the chunks more useful for downstream applications like similarity search and analysis.
+
+3. **Improved Retrieval Accuracy**
+   - With contextually relevant chunks, the embedding-based similarity search will be more accurate. This is because the chunks will better represent the underlying topics and concepts, leading to more precise search results.
+
+### Evaluation
+
+1. **Semantic Similarity**
+   - Use sentence embeddings and cosine similarity to ensure that sentences within a chunk are semantically related. This will help in detecting natural topic boundaries and maintaining coherence within each chunk.
+
+2. **Contextual Relevance**
+   - Each chunk should be contextually meaningful and retain important metadata such as section headers. This will ensure that the chunks are useful for downstream applications like similarity search and analysis.
+
+3. **Reduction of Concept Fragmentation**
+   - Aim to group related sentences together to reduce the chances of splitting key concepts across multiple chunks. This will make the chunks more coherent and easier to analyze.
+
+4. **Human Review**
+   - Conduct human reviews to evaluate the coherence of the chunks. This will involve assessing whether the chunks make sense as standalone units and whether they accurately represent the underlying topics and concepts.
+
+5. **Automatic Metrics**
+   - Use automatic metrics such as Rouge and BLEU scores to evaluate the internal consistency and coherence of the chunks. These metrics will provide quantitative measures of chunk quality.

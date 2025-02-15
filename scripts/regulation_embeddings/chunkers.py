@@ -8,6 +8,10 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 from lxml import etree
 from lxml.etree import ParseError, XMLSyntaxError
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from nltk.tokenize import sent_tokenize
+from texttiling import TextTilingTokenizer
 
 
 class XMLParsingError(Exception):
@@ -32,7 +36,7 @@ class BaseChunker(ABC):
 
 
 class XMLChunker(BaseChunker):
-    """Chunks XML documents based on their structure."""
+    """Chunks XML documents based on their structure and semantic similarity."""
 
     # XML namespaces commonly found in regulation documents
     NAMESPACES = {
@@ -57,11 +61,19 @@ class XMLChunker(BaseChunker):
         max_chunk_length: int = 1000,
         xml_tag_depth: str = ".//DIV8",
         min_chunk_length: int = 100,
+        similarity_threshold: float = 0.7,
+        use_text_tiling: bool = False,
+        use_bert_segmentation: bool = False,
     ):
         self.max_chunk_length = max_chunk_length
         self.min_chunk_length = min_chunk_length
         self.xml_tag_depth = xml_tag_depth
+        self.similarity_threshold = similarity_threshold
+        self.use_text_tiling = use_text_tiling
+        self.use_bert_segmentation = use_bert_segmentation
         self.logger = logging.getLogger(__name__)
+        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.text_tiling_tokenizer = TextTilingTokenizer()
 
     def clean_text(self, text: str) -> str:
         """Clean up text by removing extra whitespace and normalizing quotes."""
@@ -181,6 +193,20 @@ class XMLChunker(BaseChunker):
 
         return metadata
 
+    def compute_sentence_embeddings(self, sentences: List[str]) -> np.ndarray:
+        """Compute sentence embeddings using Sentence Transformers."""
+        return self.model.encode(sentences, convert_to_numpy=True)
+
+    def identify_chunk_boundaries(self, sentences: List[str]) -> List[int]:
+        """Identify chunk boundaries based on semantic similarity."""
+        embeddings = self.compute_sentence_embeddings(sentences)
+        similarities = np.array(
+            [np.dot(embeddings[i], embeddings[i + 1]) / (np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[i + 1]))
+             for i in range(len(embeddings) - 1)]
+        )
+        boundaries = [i + 1 for i, sim in enumerate(similarities) if sim < self.similarity_threshold]
+        return boundaries
+
     def iter_chunks(
         self, element: etree._Element, metadata: Dict
     ) -> Iterator[Tuple[str, Dict]]:
@@ -249,8 +275,30 @@ class XMLChunker(BaseChunker):
                     metadata = self.extract_section_metadata(div)
 
                     # Generate chunks for this division
-                    for chunk_text, chunk_metadata in self.iter_chunks(div, metadata):
-                        chunks.append((chunk_text, chunk_metadata))
+                    if self.use_text_tiling:
+                        # Use TextTiling for chunking
+                        text = " ".join([self.clean_text(p.text) for p in div.xpath(".//P") if p.text])
+                        tiling_chunks = self.text_tiling_tokenizer.tokenize(text)
+                        for chunk in tiling_chunks:
+                            if len(chunk) >= self.min_chunk_length:
+                                chunks.append((chunk, metadata))
+                    elif self.use_bert_segmentation:
+                        # Placeholder for BERT-based segmentation
+                        pass
+                    else:
+                        # Use semantic similarity for chunking
+                        sentences = [self.clean_text(p.text) for p in div.xpath(".//P") if p.text]
+                        boundaries = self.identify_chunk_boundaries(sentences)
+                        start = 0
+                        for boundary in boundaries:
+                            chunk_text = " ".join(sentences[start:boundary])
+                            if len(chunk_text) >= self.min_chunk_length:
+                                chunks.append((chunk_text, metadata))
+                            start = boundary
+                        # Add remaining sentences as the last chunk
+                        chunk_text = " ".join(sentences[start:])
+                        if len(chunk_text) >= self.min_chunk_length:
+                            chunks.append((chunk_text, metadata))
 
                 except Exception as e:
                     # Log error but continue processing other divisions
