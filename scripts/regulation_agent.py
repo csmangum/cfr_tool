@@ -79,7 +79,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
-from regulation_embeddings.models import RegulationChunk
+from regulation_embeddings.models import BaseRegulationChunk
 from regulation_embeddings.storage import DatabaseManager
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine
@@ -154,7 +154,7 @@ class RegulationAgent:
             engine = create_engine(db_url)
             Session = sessionmaker(bind=engine)
             session = Session()
-            count = session.query(RegulationChunk).count()
+            count = session.query(BaseRegulationChunk).count()
             logger.info(f"Connected to database. Found {count} regulation chunks.")
             session.close()
         except Exception as e:
@@ -289,16 +289,18 @@ Please provide a clear answer, citing specific regulations where appropriate."""
             session = Session()
 
             # Get basic stats
-            chunk_count = session.query(RegulationChunk).count()
-            agency_count = session.query(RegulationChunk.agency).distinct().count()
+            chunk_count = session.query(BaseRegulationChunk).count()
+            agency_count = session.query(BaseRegulationChunk.agency).distinct().count()
 
             # Get sample of available agencies
-            agencies = session.query(RegulationChunk.agency).distinct().limit(5).all()
+            agencies = (
+                session.query(BaseRegulationChunk.agency).distinct().limit(5).all()
+            )
             sample_agencies = [agency[0] for agency in agencies]
 
             # Get date range
             date_range = session.query(
-                func.min(RegulationChunk.date), func.max(RegulationChunk.date)
+                func.min(BaseRegulationChunk.date), func.max(BaseRegulationChunk.date)
             ).first()
 
             diagnostics["database"] = {

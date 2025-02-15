@@ -1,17 +1,14 @@
 # Regulation Search Model Architecture
 
 ## Overview
-The regulation search system uses a hybrid approach combining dense retrieval (embeddings) with metadata enrichment to provide accurate and contextual search results for federal regulations.
+The regulation search system currently uses dense retrieval with base text embeddings. Future enhancements will add metadata enrichment to provide more contextual search results.
 
 ## Core Components
 
 ### 1. Embedding Model
 - **Base Model**: SentenceTransformer ('all-MiniLM-L6-v2')
-- **Vector Dimension**: 1536 dimensions total
-  - 384 base dimensions (text)
-  - 384 cross-references embedding
-  - 384 definitions embedding
-  - 384 authority embedding
+- **Vector Dimension**: 384 dimensions (text only)
+- **Future Enhancement**: Will expand to 1536 dimensions with metadata enrichment
 - **Normalization**: L2 normalization for cosine similarity
 
 ### 2. Metadata Enrichment

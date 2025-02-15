@@ -1,8 +1,10 @@
 import sqlite3
 from pathlib import Path
-import pandas as pd
+from typing import Any, List
+
 import numpy as np
-from typing import List, Any
+import pandas as pd
+
 
 def connect_to_db():
     """Connect to the embeddings database."""
@@ -11,6 +13,7 @@ def connect_to_db():
         raise FileNotFoundError(f"Database not found at {db_path}")
     return sqlite3.connect(db_path)
 
+
 def format_embedding(embedding: List[float], max_dims: int = 5) -> str:
     """Format embedding vector for display."""
     if not isinstance(embedding, list):
@@ -18,11 +21,12 @@ def format_embedding(embedding: List[float], max_dims: int = 5) -> str:
             embedding = np.frombuffer(embedding, dtype=np.float32).tolist()
         except:
             return "Invalid embedding format"
-    
+
     total_dims = len(embedding)
     if total_dims <= max_dims:
         return f"[{', '.join(f'{x:.4f}' for x in embedding)}]"
     return f"[{', '.join(f'{x:.4f}' for x in embedding[:max_dims])}...] ({total_dims} dims)"
+
 
 def format_value(value: Any) -> str:
     """Format values for display."""
@@ -42,44 +46,49 @@ def format_value(value: Any) -> str:
         return value[:97] + "..."
     return str(value)
 
+
 def get_embedding_stats(df: pd.DataFrame, col_name: str) -> dict:
     """Calculate statistics for embedding column."""
     try:
         # Convert first embedding to get dimensions
         sample_embedding = np.frombuffer(df[col_name].iloc[0], dtype=np.float32)
         dims = len(sample_embedding)
-        
+
         # Convert all embeddings
-        embeddings = np.vstack([
-            np.frombuffer(emb, dtype=np.float32) 
-            for emb in df[col_name] if emb is not None
-        ])
-        
+        embeddings = np.vstack(
+            [
+                np.frombuffer(emb, dtype=np.float32)
+                for emb in df[col_name]
+                if emb is not None
+            ]
+        )
+
         return {
             "dimensions": dims,
             "mean_magnitude": float(np.linalg.norm(embeddings, axis=1).mean()),
             "std_magnitude": float(np.linalg.norm(embeddings, axis=1).std()),
             "mean_values": embeddings.mean(axis=0)[:5].tolist(),  # First 5 dimensions
-            "std_values": embeddings.std(axis=0)[:5].tolist()     # First 5 dimensions
+            "std_values": embeddings.std(axis=0)[:5].tolist(),  # First 5 dimensions
         }
     except Exception as e:
         return {"error": str(e)}
+
 
 def view_table(conn: sqlite3.Connection, table_name: str):
     """View contents of a specific table with special handling for embeddings."""
     try:
         df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-        
+
         print(f"\n{'='*100}")
         print(f"TABLE: {table_name}".center(100))
         print(f"{'='*100}")
-        
+
         # Basic information
         print(f"Number of rows: {len(df)}")
         print(f"Number of columns: {len(df.columns)}")
-        
+
         # Add agency count if agency column exists
-        agency_columns = [col for col in df.columns if 'agency' in col.lower()]
+        agency_columns = [col for col in df.columns if "agency" in col.lower()]
         if agency_columns:
             print("\nAGENCY COUNTS:")
             print("-" * 85)
@@ -95,20 +104,24 @@ def view_table(conn: sqlite3.Connection, table_name: str):
         print("-" * 85)
         print(f"{'Column Name':<30} | {'Type':<12} | {'Non-Null':<10} | {'Notes':<25}")
         print("-" * 85)
-        
+
         embedding_columns = []
         for col in df.columns:
             dtype = str(df[col].dtype)
             non_null = df[col].count()
-            
+
             # Detect potential embedding columns
-            if dtype == 'object' and df[col].iloc[0] is not None and isinstance(df[col].iloc[0], (bytes, bytearray)):
+            if (
+                dtype == "object"
+                and df[col].iloc[0] is not None
+                and isinstance(df[col].iloc[0], (bytes, bytearray))
+            ):
                 notes = "Embedding column"
                 embedding_columns.append(col)
             else:
                 n_unique = df[col].nunique()
                 notes = f"{n_unique} unique values"
-            
+
             print(f"{str(col):<30} | {dtype:<12} | {non_null:<10} | {notes:<25}")
 
         # Embedding statistics
@@ -122,13 +135,17 @@ def view_table(conn: sqlite3.Connection, table_name: str):
                 print(f"Dimensions: {stats['dimensions']}")
                 print(f"Mean magnitude: {stats['mean_magnitude']:.4f}")
                 print(f"Std magnitude: {stats['std_magnitude']:.4f}")
-                print(f"Mean values (first 5 dims): {[f'{x:.4f}' for x in stats['mean_values']]}")
-                print(f"Std values (first 5 dims): {[f'{x:.4f}' for x in stats['std_values']]}")
+                print(
+                    f"Mean values (first 5 dims): {[f'{x:.4f}' for x in stats['mean_values']]}"
+                )
+                print(
+                    f"Std values (first 5 dims): {[f'{x:.4f}' for x in stats['std_values']]}"
+                )
 
         # Sample rows
         print("\nSAMPLE ROWS:")
         sample_df = df.sample(n=min(5, len(df)))
-        
+
         # Create formatted version of sample data
         formatted_df = pd.DataFrame()
         for col in sample_df.columns:
@@ -137,16 +154,16 @@ def view_table(conn: sqlite3.Connection, table_name: str):
         # Split into sections for readability
         COLS_PER_SECTION = 4
         column_sections = [
-            list(formatted_df.columns[i:i + COLS_PER_SECTION])
+            list(formatted_df.columns[i : i + COLS_PER_SECTION])
             for i in range(0, len(formatted_df.columns), COLS_PER_SECTION)
         ]
 
         for section_num, columns in enumerate(column_sections, 1):
             section_df = formatted_df[columns]
-            
+
             print(f"\nSection {section_num} of {len(column_sections)}:")
             print("-" * 100)
-            
+
             # Calculate column widths
             col_widths = {
                 col: max(len(str(col)), section_df[col].str.len().max(), 15)
@@ -154,20 +171,26 @@ def view_table(conn: sqlite3.Connection, table_name: str):
             }
 
             # Print headers
-            header_row = " | ".join(f"{col:<{col_widths[col]}}" for col in section_df.columns)
+            header_row = " | ".join(
+                f"{col:<{col_widths[col]}}" for col in section_df.columns
+            )
             print(header_row)
             print("-" * len(header_row))
-            
+
             # Print rows
             for _, row in section_df.iterrows():
-                row_str = " | ".join(f"{str(val):<{col_widths[col]}}" for col, val in row.items())
+                row_str = " | ".join(
+                    f"{str(val):<{col_widths[col]}}" for col, val in row.items()
+                )
                 print(row_str)
             print()
 
     except Exception as e:
         print(f"Error viewing table {table_name}: {e}")
         import traceback
+
         print(traceback.format_exc())
+
 
 def main():
     try:
@@ -175,13 +198,13 @@ def main():
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [table[0] for table in cursor.fetchall()]
-        
+
         if not tables:
             print("No tables found in the database.")
             return
 
         print(f"Found {len(tables)} tables in the database.")
-        
+
         for table in tables:
             view_table(conn, table)
 
@@ -190,8 +213,9 @@ def main():
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
-        if 'conn' in locals():
+        if "conn" in locals():
             conn.close()
 
+
 if __name__ == "__main__":
-    main() 
+    main()

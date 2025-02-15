@@ -2,79 +2,81 @@
 
 from pathlib import Path
 from typing import Optional
-from pydantic import BaseModel, Field, DirectoryPath
+
+from pydantic import BaseModel, DirectoryPath, Field
 
 
 class ChunkerConfig(BaseModel):
     """Configuration for document chunking."""
+
     max_chunk_length: int = Field(
-        default=1000,
-        description="Maximum length of text chunks in characters"
+        default=1000, description="Maximum length of text chunks in characters"
     )
     xml_tag_depth: str = Field(
-        default=".//DIV8",
-        description="XPath expression for finding document divisions"
+        default=".//DIV8", description="XPath expression for finding document divisions"
     )
 
 
 class EmbedderConfig(BaseModel):
     """Configuration for document embedding."""
+
     model_name: str = Field(
-        default='all-MiniLM-L6-v2',
-        description="Name of the sentence-transformer model to use"
+        default="all-MiniLM-L6-v2",
+        description="Name of the sentence-transformer model to use",
     )
     batch_size: int = Field(
-        default=32,
-        description="Batch size for embedding generation"
+        default=32, description="Batch size for embedding generation"
     )
     device: Optional[str] = Field(
-        default=None,
-        description="Device to use for embedding (cpu, cuda, etc.)"
+        default=None, description="Device to use for embedding (cpu, cuda, etc.)"
     )
 
 
 class DatabaseConfig(BaseModel):
     """Configuration for database storage."""
+
     db_url: str = Field(
         default="sqlite:///data/db/regulation_embeddings.db",
-        description="SQLAlchemy database URL"
+        description="SQLAlchemy database URL",
     )
     batch_size: int = Field(
-        default=100,
-        description="Batch size for database operations"
+        default=100, description="Batch size for database operations"
     )
 
 
 class ProcessingConfig(BaseModel):
     """Configuration for regulation processing."""
-    data_dir: Path = Field(
+
+    data_dir: DirectoryPath = Field(
         default=Path("data/agencies"),
-        description="Root directory containing agency data"
+        description="Root directory containing agency data",
     )
     xml_pattern: str = Field(
-        default="*/xml/*.xml",
-        description="Glob pattern for finding XML files"
+        default="*/xml/*.xml", description="Glob pattern for finding XML files"
     )
-    log_file: str = Field(
-        default="data/logs/embed_regulations.log",
-        description="Path to log file"
+    log_file: Path = Field(
+        default=Path("data/logs/embed_regulations.log"), description="Path to log file"
     )
+    max_workers: int = Field(
+        default=4, description="Maximum number of worker processes"
+    )
+    batch_size: int = Field(default=50, description="Batch size for processing chunks")
 
 
 class VectorStoreConfig(BaseModel):
     """Configuration for vector store."""
+
     collection_name: str = Field(
-        default="regulations",
-        description="Name of the ChromaDB collection"
+        default="regulations", description="Name of the ChromaDB collection"
     )
     persist_directory: str = Field(
-        default="data/chroma",
-        description="Directory to persist ChromaDB data"
+        default="data/chroma", description="Directory to persist ChromaDB data"
     )
 
 
 class Config(BaseModel):
     """Main configuration for regulation embeddings."""
+
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
@@ -85,13 +87,19 @@ class Config(BaseModel):
     def from_yaml(cls, path: Path) -> "Config":
         """Load configuration from YAML file."""
         import yaml
-        
+
         # Create default config if file doesn't exist
         if not path.exists():
             return cls()
-            
+
         with open(path) as f:
             data = yaml.safe_load(f)
             if data is None:  # Empty file
                 return cls()
-        return cls.parse_obj(data) 
+
+        # Validate paths exist
+        if "processing" in data:
+            log_file = Path(data["processing"].get("log_file", ""))
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        return cls.parse_obj(data)

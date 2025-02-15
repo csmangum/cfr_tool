@@ -6,21 +6,26 @@ from the SQLite database (regulation_embeddings.db) to a local Faiss persistent 
 
 import argparse
 import json
-import os
 import sqlite3
+from pathlib import Path
 
 import faiss
 import numpy as np
 
 
 def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -> None:
+    """Export embeddings and metadata from SQLite database to Faiss persistent storage."""
+    # Create output directories if they don't exist
+    Path(index_out_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(metadata_out_path).parent.mkdir(parents=True, exist_ok=True)
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     # Query records including metadata fields
     query = """
         SELECT id, agency, title, chapter, date, chunk_index, embedding, section, 
-               hierarchy, created_at, chunk_text, cross_references, definitions, authority
+               hierarchy, created_at, chunk_text
         FROM regulation_chunks
         WHERE embedding IS NOT NULL AND chunk_text IS NOT NULL
     """
@@ -40,7 +45,7 @@ def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -
         try:
             row_id = row[0]
             embedding_bytes = row[6]
-            
+
             # Convert embedding bytes into numpy array (now 1536 dimensions)
             embedding = np.frombuffer(embedding_bytes, dtype=np.float32)
 
@@ -68,9 +73,6 @@ def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -
                 "hierarchy": row[8],
                 "created_at": row[9],
                 "chunk_text": row[10],
-                "cross_references": json.loads(row[11]) if row[11] else [],
-                "definitions": json.loads(row[12]) if row[12] else [],
-                "authority": json.loads(row[13]) if row[13] else []
             }
 
         except Exception as e:

@@ -18,9 +18,8 @@ from typing import Dict, List, Optional, Tuple
 
 import faiss
 import numpy as np
+from regulation_embeddings.models import BaseRegulationChunk
 from sentence_transformers import SentenceTransformer
-
-from scripts.regulation_embeddings.models import RegulationChunk
 
 # Add warning filter at the top of the file
 warnings.filterwarnings(
@@ -137,29 +136,30 @@ class RegulationSearcher:
         )
 
     def _enrich_query_embedding(self, query: str) -> np.ndarray:
-        """Create enriched query embedding to match document embeddings."""
+        """Create query embedding to match document embeddings."""
         # Get base query embedding
         query_embedding = self.model.encode(query, normalize_embeddings=True)
 
         # Add zero vectors for metadata fields since query doesn't have metadata
-        enriched_embedding = np.concatenate(
-            [
-                query_embedding,
-                self.zero_vector,  # cross_references - allows matching similar regulations
-                self.zero_vector,  # definitions
-                self.zero_vector,  # authority
-            ]
-        )
+        #! TODO: Add metadata embeddings back in at some point
+        # enriched_embedding = np.concatenate(
+        #     [
+        #         query_embedding,
+        #         self.zero_vector,  # cross_references - allows matching similar regulations
+        #         self.zero_vector,  # definitions
+        #         self.zero_vector,  # authority
+        #     ]
+        # )
 
         # Normalize final embedding
-        return enriched_embedding / np.linalg.norm(enriched_embedding)
+        return query_embedding / np.linalg.norm(query_embedding)
 
     def search(self, query: str, n_results: int = 5, batch_size: int = 32) -> list:
-        """Search for relevant regulation chunks using enriched embeddings."""
+        """Search for relevant regulation chunks using embeddings."""
         print(f"Processing query: {query}")
 
         try:
-            # Create enriched query embedding that includes metadata concepts
+            # Create query embedding that includes metadata concepts
             query_embedding = self._enrich_query_embedding(query)
 
             # Search with expanded results for filtering
@@ -229,11 +229,13 @@ class RegulationSearcher:
         session = self.Session()
         try:
             # Build query with filters
-            query = session.query(RegulationChunk)
+            query = session.query(BaseRegulationChunk)
             if filters:
                 for field, value in filters.items():
-                    if hasattr(RegulationChunk, field):
-                        query = query.filter(getattr(RegulationChunk, field) == value)
+                    if hasattr(BaseRegulationChunk, field):
+                        query = query.filter(
+                            getattr(BaseRegulationChunk, field) == value
+                        )
 
             results = []
             # Calculate similarities
