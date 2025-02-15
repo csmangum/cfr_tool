@@ -57,6 +57,10 @@ class RegulationSearcher:
         self.metadata = self._load_metadata(metadata_path)
         self.db_path = db_path
         self._cache = {}
+        self.model = SentenceTransformer(model_name)
+        
+        # Initialize zero vectors for empty metadata fields
+        self.zero_vector = np.zeros(384)  # Base embedding dimension
 
         # Verify database connection and content
         try:
@@ -82,9 +86,6 @@ class RegulationSearcher:
                     print("WARNING: No chunks with text found in database")
         except sqlite3.Error as e:
             raise RuntimeError(f"Database connection error: {e}")
-
-        print(f"Loading embedding model: {model_name}")
-        self.model = SentenceTransformer(model_name)
 
     @staticmethod
     def _load_faiss_index(index_path: str) -> faiss.IndexIDMap:
@@ -132,65 +133,60 @@ class RegulationSearcher:
             f"Text:\n{chunk_text}\n"
         )
 
+    def _enrich_query_embedding(self, query: str) -> np.ndarray:
+        """Create enriched query embedding to match document embeddings."""
+        # Get base query embedding
+        query_embedding = self.model.encode(query, normalize_embeddings=True)
+        
+        # Add zero vectors for metadata fields since query doesn't have metadata
+        enriched_embedding = np.concatenate([
+            query_embedding,
+            self.zero_vector,  # cross_references
+            self.zero_vector,  # definitions
+            self.zero_vector   # authority
+        ])
+        
+        # Normalize final embedding
+        return enriched_embedding / np.linalg.norm(enriched_embedding)
+
     def search(self, query: str, n_results: int = 5, batch_size: int = 32) -> list:
-        """Search for relevant regulation chunks."""
+        """Search for relevant regulation chunks using enriched embeddings."""
         print(f"Processing query: {query}")
 
         try:
-            # Create query embedding - support for batch queries
-            if isinstance(query, str):
-                queries = [query]
-            else:
-                queries = query
-
-            # Process in batches for better performance
-            embeddings = []
-            for i in range(0, len(queries), batch_size):
-                batch = queries[i : i + batch_size]
-                batch_embeddings = self.model.encode(batch).astype(np.float32)
-                embeddings.append(batch_embeddings)
-
-            query_embedding = np.vstack(embeddings)
-
-            # Normalize embeddings
-            faiss.normalize_L2(query_embedding)
-
-            # Use inner product (cosine similarity) directly instead of L2 distance conversion
-            distances, indices = self.index.search(query_embedding, n_results * 2)
+            # Create enriched query embedding
+            query_embedding = self._enrich_query_embedding(query)
+            
+            # Search with expanded results for filtering
+            distances, indices = self.index.search(
+                query_embedding.reshape(1, -1), 
+                n_results * 2
+            )
 
             results = []
             seen_texts = set()
 
-            # Process results more efficiently
-            for batch_distances, batch_indices in zip(distances, indices):
-                batch_results = []
+            for distance, idx in zip(distances[0], indices[0]):
+                if idx == -1 or distance < 0.2:  # Early filtering
+                    continue
 
-                for distance, idx in zip(batch_distances, batch_indices):
-                    if idx == -1 or distance < 0.2:  # Early filtering
-                        continue
+                result_metadata = self.metadata.get(str(idx))
+                if not result_metadata:
+                    continue
 
-                    result_metadata = self.metadata.get(str(idx))
-                    if not result_metadata:
-                        continue
+                chunk_text = self._load_chunk_text(idx)
+                if chunk_text == "Chunk text not found" or chunk_text in seen_texts:
+                    continue
 
-                    chunk_text = self._load_chunk_text(idx)
-                    if chunk_text == "Chunk text not found" or chunk_text in seen_texts:
-                        continue
+                seen_texts.add(chunk_text)
+                results.append((result_metadata, 1 / (1 + distance), chunk_text))
 
-                    seen_texts.add(chunk_text)
-                    batch_results.append((result_metadata, distance, chunk_text))
-
-                # Sort and trim results per batch
-                batch_results.sort(key=lambda x: x[1], reverse=True)
-                results.extend(batch_results[:n_results])
-
+            # Sort by similarity score and return top results
+            results.sort(key=lambda x: x[1], reverse=True)
             return results[:n_results]
 
         except Exception as e:
             print(f"Error during search: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
             return []
 
     def save_results(

@@ -28,10 +28,30 @@ def load_data(index_path: str, metadata_path: str):
 
 def analyze_vectors(index: faiss.Index, metadata: Dict[str, Any]):
     """Analyze vectors and metadata to generate statistics."""
-    # Basic stats
     total_vectors = index.ntotal
-    dimension = index.d
-
+    dimension = index.d  # Should now be 1536
+    
+    # Add embedding dimension analysis
+    embedding_stats = {
+        "total_dimension": dimension,
+        "base_dimension": 384,
+        "metadata_dimensions": {
+            "cross_references": 384,
+            "definitions": 384,
+            "authority": 384
+        }
+    }
+    
+    # Add metadata field analysis
+    metadata_stats = {
+        "cross_references_present": sum(1 for m in metadata.values() 
+                                      if m.get("cross_references")),
+        "definitions_present": sum(1 for m in metadata.values() 
+                                 if m.get("definitions")),
+        "authority_present": sum(1 for m in metadata.values() 
+                               if m.get("enforcement_agencies"))
+    }
+    
     # Count vectors by agency
     agency_counts = Counter(item["agency"] for item in metadata.values())
 
@@ -62,6 +82,8 @@ def analyze_vectors(index: faiss.Index, metadata: Dict[str, Any]):
     return {
         "total_vectors": total_vectors,
         "dimension": dimension,
+        "embedding_stats": embedding_stats,
+        "metadata_stats": metadata_stats,
         "agency_counts": agency_counts,
         "agency_title_counts": agency_title_counts,
         "unique_titles": unique_titles,

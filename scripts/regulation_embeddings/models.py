@@ -7,7 +7,7 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 class RegulationChunk(Base):
-    """Model for storing regulation chunks and their embeddings."""
+    """Model for storing regulation chunks and their enriched embeddings."""
     
     __tablename__ = "regulation_chunks"
 
@@ -18,7 +18,10 @@ class RegulationChunk(Base):
     date = Column(String)
     chunk_text = Column(String)
     chunk_index = Column(Integer)
-    embedding = Column(LargeBinary)
+    embedding = Column(LargeBinary)  # Now stores 1536-dimensional embeddings
     section = Column(String)
     hierarchy = Column(String)
+    cross_references = Column(String)  # Store as JSON list
+    definitions = Column(String)       # Store as JSON list
+    authority = Column(String)         # Store as JSON list
     created_at = Column(DateTime, default=datetime.utcnow) 

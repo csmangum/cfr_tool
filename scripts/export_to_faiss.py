@@ -17,9 +17,10 @@ def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Query records including chunk_text
+    # Query records including metadata fields
     query = """
-        SELECT id, agency, title, chapter, date, chunk_index, embedding, section, hierarchy, created_at, chunk_text
+        SELECT id, agency, title, chapter, date, chunk_index, embedding, section, 
+               hierarchy, created_at, chunk_text, cross_references, definitions, authority
         FROM regulation_chunks
         WHERE embedding IS NOT NULL AND chunk_text IS NOT NULL
     """
@@ -33,39 +34,30 @@ def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -
     embeddings_list = []
     ids = []
     metadata_mapping = {}
-    skipped = 0
 
     # Process each database record
-    for i, row in enumerate(rows):
+    for row in rows:
         try:
             row_id = row[0]
             embedding_bytes = row[6]
-            chunk_text = row[10]
-
-            if not embedding_bytes or not chunk_text:
-                skipped += 1
-                continue
-
-            # Convert embedding bytes into numpy array
+            
+            # Convert embedding bytes into numpy array (now 1536 dimensions)
             embedding = np.frombuffer(embedding_bytes, dtype=np.float32)
 
             # Skip invalid embeddings
             if np.isnan(embedding).any() or np.isinf(embedding).any():
-                skipped += 1
                 continue
 
-            # Normalize the embedding to unit length
+            # Normalize the embedding
             norm = np.linalg.norm(embedding)
             if norm == 0:
-                skipped += 1
                 continue
-
             embedding = embedding / norm
 
             embeddings_list.append(embedding)
             ids.append(row_id)
 
-            # Save metadata mapping including chunk_text
+            # Save metadata mapping including enriched fields
             metadata_mapping[str(row_id)] = {
                 "agency": row[1],
                 "title": row[2],
@@ -75,18 +67,19 @@ def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -
                 "section": row[7],
                 "hierarchy": row[8],
                 "created_at": row[9],
-                "chunk_text": chunk_text,
+                "chunk_text": row[10],
+                "cross_references": json.loads(row[11]) if row[11] else [],
+                "definitions": json.loads(row[12]) if row[12] else [],
+                "authority": json.loads(row[13]) if row[13] else []
             }
 
         except Exception as e:
-            skipped += 1
+            print(f"Error processing row {row_id}: {e}")
             continue
 
-    # Create a numpy matrix of embeddings
+    # Create FAISS index with correct dimension
     embeddings_np = np.vstack(embeddings_list)
-    dim = embeddings_np.shape[1]
-
-    # Build an L2-normalized index for cosine similarity search
+    dim = embeddings_np.shape[1]  # Should be 1536
     index = faiss.IndexFlatL2(dim)
     index_id = faiss.IndexIDMap(index)
 
@@ -94,15 +87,10 @@ def export_to_faiss(db_path: str, index_out_path: str, metadata_out_path: str) -
     ids_np = np.array(ids, dtype=np.int64)
     index_id.add_with_ids(embeddings_np, ids_np)
 
-    # Save the index and metadata
-    os.makedirs(os.path.dirname(index_out_path), exist_ok=True)
+    # Save index and metadata
     faiss.write_index(index_id, index_out_path)
-
-    os.makedirs(os.path.dirname(metadata_out_path), exist_ok=True)
     with open(metadata_out_path, "w") as f:
         json.dump(metadata_mapping, f, indent=2)
-
-    conn.close()
 
 
 def main():

@@ -132,3 +132,25 @@ The system uses several optimizations:
 - Metadata caching
 
 Results are ranked by cosine similarity score, with higher scores indicating better matches to the query.
+
+# Semantic Search with Enriched Embeddings
+
+The search system uses enriched embeddings that combine the base text representation with metadata-specific embeddings:
+
+## Embedding Components
+- Base text embedding (384d)
+- Cross-references embedding (384d)
+- Definitions embedding (384d)
+- Authority/enforcement embedding (384d)
+
+## Search Process
+1. Query text is embedded using the base model
+2. Query embedding is enriched with zero vectors for metadata fields
+3. FAISS performs similarity search using the full 1536d vectors
+4. Results are filtered and ranked based on similarity scores
+
+## Metadata Enrichment
+The system enriches embeddings with semantic metadata to improve search relevance:
+- Cross-references help connect related regulations
+- Definitions improve term matching
+- Authority information helps match enforcement context

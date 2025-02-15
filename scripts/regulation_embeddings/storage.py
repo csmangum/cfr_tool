@@ -75,60 +75,37 @@ class DatabaseManager:
     def store_chunks(self, chunks: List[Tuple[str, Dict]], 
                     embeddings: np.ndarray,
                     metadata: Dict[str, str]) -> None:
-        """Store chunks and their embeddings using bulk insert."""
+        """Store chunks and their enriched embeddings."""
         session = self.Session()
         
         try:
-            # First store in SQL database
-            self.logger.info(f"Starting database transaction for {len(chunks)} chunks")
-            
-            # Process in smaller batches to manage memory
             batch_size = min(50, len(chunks))
-            max_retries = 3
             
             for i in range(0, len(chunks), batch_size):
                 batch_end = min(i + batch_size, len(chunks))
-                retry_count = 0
                 
-                while retry_count < max_retries:
-                    try:
-                        # Prepare batch records
-                        batch_records = [
-                            RegulationChunk(
-                                agency=metadata['agency'],
-                                title=metadata['title'],
-                                chapter=metadata['chapter'],
-                                date=metadata['date'],
-                                chunk_text=chunk_text,
-                                embedding=embeddings[j].tobytes(),
-                                section=section_metadata.get('section'),
-                                hierarchy=self._serialize_metadata(section_metadata.get('hierarchy'))
-                            )
-                            for j, (chunk_text, section_metadata) 
-                            in enumerate(chunks[i:batch_end], start=i)
-                        ]
-                        
-                        # Insert batch
-                        self.logger.debug(f"Inserting batch {i//batch_size + 1} of {len(batch_records)} chunks")
-                        session.bulk_save_objects(batch_records)
-                        session.commit()
-                        self.logger.debug(f"Batch {i//batch_size + 1} committed successfully")
-                        
-                        # Clear SQLAlchemy session to free memory
-                        session.expunge_all()
-                        break  # Success - exit retry loop
-                        
-                    except Exception as e:
-                        retry_count += 1
-                        session.rollback()
-                        self.logger.warning(
-                            f"Error storing batch {i//batch_size + 1} (attempt {retry_count}): {str(e)}"
-                        )
-                        if retry_count >= max_retries:
-                            raise
-                        
-                        # Wait before retrying
-                        time.sleep(1)
+                # Prepare batch records with enriched metadata
+                batch_records = [
+                    RegulationChunk(
+                        agency=metadata['agency'],
+                        title=metadata['title'],
+                        chapter=metadata['chapter'],
+                        date=metadata['date'],
+                        chunk_text=chunk_text,
+                        embedding=embeddings[j].tobytes(),
+                        section=section_metadata.get('section'),
+                        hierarchy=self._serialize_metadata(section_metadata.get('hierarchy')),
+                        cross_references=json.dumps(section_metadata.get('cross_references', [])),
+                        definitions=json.dumps(section_metadata.get('definitions', [])),
+                        authority=json.dumps(section_metadata.get('enforcement_agencies', []))
+                    )
+                    for j, (chunk_text, section_metadata) 
+                    in enumerate(chunks[i:batch_end], start=i)
+                ]
+                
+                session.bulk_save_objects(batch_records)
+                session.commit()
+                session.expunge_all()
             
             # Vector store handling in separate try block
             if self.vector_store is not None:

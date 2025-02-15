@@ -8,13 +8,22 @@ This tool provides an automated pipeline to:
 1. Download regulations from the eCFR API
 2. Process and analyze text metrics (readability, complexity, etc.)
 3. Generate visualizations and statistical summaries
-4. Search regulations using semantic similarity
-4. Search regulations using semantic similarity
+4. Search regulations using semantic similarity with enriched embeddings
 
 ## Features
 
 - Downloads regulations from multiple federal agencies
-- Calculates various readability metrics:
+- Intelligent document chunking:
+  - Hierarchical XML parsing
+  - Semantic metadata extraction
+  - Context preservation
+  - See [Chunking Documentation](docs/Chunking.md)
+- Enriched embeddings with metadata:
+  - Base text embeddings
+  - Cross-reference embeddings
+  - Definition embeddings
+  - Authority embeddings
+- Readability metrics:
   - Flesch Reading Ease
   - Flesch-Kincaid Grade Level
   - Gunning Fog Index
@@ -23,11 +32,8 @@ This tool provides an automated pipeline to:
 - Semantic search capabilities:
   - Natural language queries
   - Similarity-based matching
-  - Relevant regulation retrieval
-- Semantic search capabilities:
-  - Natural language queries
-  - Similarity-based matching
-  - Relevant regulation retrieval
+  - Metadata-enriched results
+  - See [Search Documentation](docs/Search.md)
 - Generates visualizations and statistical reports
 - Progress tracking with rich console interface
 - Automated data organization and storage
@@ -81,43 +87,42 @@ Generated files will be organized in the following directories:
 - `data/logs/` - Processing logs
 - `data/db/` - Database files
 - `data/faiss/` - Search index and metadata
-- `data/faiss/` - Search index and metadata
 
 ## Project Structure
 
 ```
 cfr_tool/
 ├── main.py              # Main entry point and pipeline orchestration
-├── get_data.py         # eCFR data downloading functionality
-├── process_data.py     # Text processing and metrics calculation
-├── visualize_metrics.py # Data visualization and reporting
+├── docs/               # Documentation
+│   ├── Model.md       # Model architecture details
+│   ├── Search.md      # Search functionality guide
+│   └── Chunking.md    # Document chunking strategy
 ├── scripts/
-│   ├── search_regulations.py    # Semantic search functionality
-│   ├── export_to_faiss.py      # Search index creation
-│   └── regulation_embeddings/   # Embedding utilities
-├── scripts/
-│   ├── search_regulations.py    # Semantic search functionality
-│   ├── export_to_faiss.py      # Search index creation
-│   └── regulation_embeddings/   # Embedding utilities
-└── data/               # Generated data and output files
-    ├── logs/           # Processing logs
+│   ├── get_data.py    # eCFR data downloading
+│   ├── process_data.py # Text processing and metrics
+│   ├── search_regulations.py # Semantic search
+│   ├── export_to_faiss.py   # Search index creation
+│   └── regulation_embeddings/
+│       ├── chunkers.py      # Document chunking
+│       ├── embedders.py     # Text embedding
+│       ├── pipeline.py      # Processing pipeline
+│       └── vector_stores.py # Vector similarity search
+└── data/               # Generated data and output
+    ├── logs/          # Processing logs
     ├── db/            # SQLite database
-    ├── plots/         # Generated visualizations
+    ├── plots/         # Visualizations
     ├── stats/         # Statistical summaries
-    └── faiss/         # Search indices and metadata
-    ├── stats/         # Statistical summaries
-    └── faiss/         # Search indices and metadata
+    └── faiss/         # Search indices
 ```
 
 ## Dependencies
 
-- rich - For console interface and progress tracking
-- requests - For API communication
-- textstat - For text analysis metrics
-- pandas - For data processing
-- matplotlib/seaborn - For visualization
-- SQLAlchemy - For database operations
-- sentence-transformers - For text embeddings
-- faiss-cpu - For similarity search
-- sentence-transformers - For text embeddings
-- faiss-cpu - For similarity search
+- rich - Console interface and progress tracking
+- requests - API communication
+- textstat - Text analysis metrics
+- pandas - Data processing
+- matplotlib/seaborn - Visualization
+- SQLAlchemy - Database operations
+- sentence-transformers - Text embeddings
+- faiss-cpu - Similarity search
+- lxml - XML processing
