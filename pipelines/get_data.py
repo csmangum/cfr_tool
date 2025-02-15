@@ -432,6 +432,7 @@ class ECFRDownloader:
     def download_all_agencies(self, progress=None, task_id=None) -> None:
         """
         Orchestrate the download of regulations for all agencies across multiple years.
+        Only downloads for agencies that don't already have folders.
         """
         start_time = datetime.now()
         logging.info("Starting download at %s", start_time)
@@ -464,14 +465,33 @@ class ECFRDownloader:
             with map_file.open("r", encoding="utf-8") as f:
                 regulations_map = json.load(f)
 
-        total_agencies = len(regulations_map)
+        # Get list of existing agency folders
+        agencies_dir = self.base_dir / "agencies"
+        existing_agencies = {p.name for p in agencies_dir.iterdir() if p.is_dir()}
+
+        # Filter out agencies that already have folders
+        remaining_agencies = {
+            slug: info
+            for slug, info in regulations_map.items()
+            if slug not in existing_agencies
+        }
+
+        if not remaining_agencies:
+            logging.info("All agency folders exist - nothing to download")
+            if progress and task_id:
+                progress.update(task_id, completed=100)
+            return
+
+        total_agencies = len(remaining_agencies)
         total_operations = total_agencies * len(dates)
         completed_operations = 0
 
-        logging.info("Downloading regulations for %d agencies...", total_agencies)
+        logging.info(
+            "Downloading regulations for %d remaining agencies...", total_agencies
+        )
 
-        for agency_slug in regulations_map.keys():
-            logging.info("Processing agency: %s", agency_slug)
+        for agency_slug, agency_info in remaining_agencies.items():
+            logging.info("Processing agency: %s (%s)", agency_info["name"], agency_slug)
             for date in dates:
                 logging.info(f"Attempting download for date: {date}")
                 self.download_agency_regulations(agency_slug, regulations_map, date)
