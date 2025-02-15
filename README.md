@@ -9,6 +9,7 @@ This tool provides an automated pipeline to:
 2. Process and analyze text metrics (readability, complexity, etc.)
 3. Generate visualizations and statistical summaries
 4. Search regulations using semantic similarity
+4. Search regulations using semantic similarity
 
 ## Features
 
@@ -19,6 +20,10 @@ This tool provides an automated pipeline to:
   - Gunning Fog Index
   - SMOG Index
   - And more...
+- Semantic search capabilities:
+  - Natural language queries
+  - Similarity-based matching
+  - Relevant regulation retrieval
 - Semantic search capabilities:
   - Natural language queries
   - Similarity-based matching
@@ -76,6 +81,7 @@ Generated files will be organized in the following directories:
 - `data/logs/` - Processing logs
 - `data/db/` - Database files
 - `data/faiss/` - Search index and metadata
+- `data/faiss/` - Search index and metadata
 
 ## Project Structure
 
@@ -89,10 +95,16 @@ cfr_tool/
 │   ├── search_regulations.py    # Semantic search functionality
 │   ├── export_to_faiss.py      # Search index creation
 │   └── regulation_embeddings/   # Embedding utilities
+├── scripts/
+│   ├── search_regulations.py    # Semantic search functionality
+│   ├── export_to_faiss.py      # Search index creation
+│   └── regulation_embeddings/   # Embedding utilities
 └── data/               # Generated data and output files
     ├── logs/           # Processing logs
     ├── db/            # SQLite database
     ├── plots/         # Generated visualizations
+    ├── stats/         # Statistical summaries
+    └── faiss/         # Search indices and metadata
     ├── stats/         # Statistical summaries
     └── faiss/         # Search indices and metadata
 ```
@@ -105,5 +117,7 @@ cfr_tool/
 - pandas - For data processing
 - matplotlib/seaborn - For visualization
 - SQLAlchemy - For database operations
+- sentence-transformers - For text embeddings
+- faiss-cpu - For similarity search
 - sentence-transformers - For text embeddings
 - faiss-cpu - For similarity search
