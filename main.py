@@ -12,9 +12,9 @@ from rich.progress import (
     TextColumn,
 )
 
-from scripts.get_data import ECFRDownloader
-from scripts.process_data import process_agencies
-from scripts.visualize_metrics import main as visualize_main
+from pipelines.get_data import ECFRDownloader
+from pipelines.process_data import process_agencies
+from pipelines.visualize_metrics import main as visualize_main
 
 
 def display_intro():
