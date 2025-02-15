@@ -1,17 +1,17 @@
-# Enriched Embeddings with Metadata
+# Enriched Embeddings with Metadata (Future Feature)
 
-This document explains how the regulation search system uses enriched embeddings that combine text content with metadata to improve search relevance.
+This document outlines a planned enhancement to the regulation search system that will use enriched embeddings combining text content with metadata to improve search relevance.
 
 ## Overview
 
-The system creates enriched embeddings by concatenating multiple embedding vectors:
+The system will create enriched embeddings by concatenating multiple embedding vectors:
 
 1. Base text embedding (384 dimensions)
-2. Cross-reference embedding (384 dimensions) 
-3. Definition embedding (384 dimensions)
-4. Authority embedding (384 dimensions)
+2. Cross-reference embedding (384 dimensions) [PLANNED]
+3. Definition embedding (384 dimensions) [PLANNED]
+4. Authority embedding (384 dimensions) [PLANNED]
 
-Total dimension: 1536 (4 x 384)
+Currently, only the base text embedding (384 dimensions) is implemented.
 
 ## Components
 

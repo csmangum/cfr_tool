@@ -18,9 +18,8 @@ import os
 import re
 import warnings
 import xml.etree.ElementTree as ET
-from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 # Suppress various warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -34,27 +33,49 @@ os.environ["TORCH_ALLOW_TF32"] = "1"  # Better performance on Ampere+ GPUs
 
 import numpy as np
 from regulation_embeddings.config import Config
-from regulation_embeddings.models import Base, RegulationChunk
-from regulation_embeddings.pipeline import RegulationProcessor
+from regulation_embeddings.models import Base, BaseRegulationChunk
+from regulation_embeddings.pipeline import ProcessingError, RegulationProcessor
 from sentence_transformers import SentenceTransformer
-from sqlalchemy import Column, DateTime, Integer, LargeBinary, String, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
-# Set up logging similar to process_data.py
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("data/logs/embed_regulations.log"),
-        logging.StreamHandler(),
-    ],
-)
-logger = logging.getLogger(__name__)
+
+def setup_logging(log_file: Path) -> logging.Logger:
+    """Set up logging configuration.
+
+    Args:
+        log_file: Path to log file
+
+    Returns:
+        Configured logger instance
+    """
+    # Create log directory if it doesn't exist
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
+    # File handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+    logger.addHandler(file_handler)
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.addHandler(console_handler)
+
+    return logger
 
 
 def create_db(db_url: str):
     """Create the SQLite database and initialize tables."""
+    # Get logger instance
+    logger = logging.getLogger(__name__)
+
     logger.info("Creating/connecting to database")
 
     # Create database directory if it doesn't exist
@@ -206,122 +227,51 @@ def chunk_regulation_xml(xml_path: str) -> List[Tuple[str, dict]]:
     return chunks
 
 
-def process_agencies():
+def process_regulations(
+    config_path: Path,
+    data_dir: Optional[Path] = None,
+    single_file: Optional[Path] = None,
+) -> None:
+    """Process regulation files using the configured pipeline.
+
+    Args:
+        config_path: Path to configuration file
+        data_dir: Optional override for data directory
+        single_file: Optional path to process a single file
+
+    Raises:
+        ProcessingError: If processing fails
     """
-    Process all regulation files, create embeddings, and store in database.
-    """
-    # Initialize the embedding model
-    logger.info("Loading embedding model")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    try:
+        # Load configuration
+        config = Config.from_yaml(config_path)
 
-    # Set up database
-    engine = create_db()
-    Session = sessionmaker(bind=engine)
-    session = Session()
+        # Override data directory if specified
+        if data_dir:
+            config.processing.data_dir = data_dir
 
-    data_dir = Path("data/agencies")
-    logger.info(f"Reading from directory: {data_dir}")
+        # Set up logging
+        logger = setup_logging(config.processing.log_file)
+        logger.info("Starting regulation processing")
+        logger.info(f"Using configuration from {config_path}")
 
-    # Count total files
-    total_files = sum(
-        len(list(agency_dir.glob("xml/*.xml")))  # Changed to look for XML files
-        for agency_dir in data_dir.iterdir()
-        if agency_dir.is_dir()
-    )
+        # Initialize processor with context manager for cleanup
+        with RegulationProcessor(config) as processor:
+            if single_file:
+                logger.info(f"Processing single file: {single_file}")
+                processor.process_file(single_file)
+            else:
+                logger.info(f"Processing regulations from {config.processing.data_dir}")
+                processor.process_directory(config.processing.data_dir)
 
-    processed_files = 0
+            logger.info("Processing completed successfully")
 
-    # Create progress bar for all files
-    with tqdm(total=total_files, desc="Processing files") as pbar:
-        for agency_dir in data_dir.iterdir():
-            if not agency_dir.is_dir():
-                continue
-
-            agency_name = agency_dir.name
-            xml_dir = agency_dir / "xml"  # Changed to xml directory
-
-            if not xml_dir.exists():
-                logger.warning(f"No XML directory found for agency: {agency_name}")
-                continue
-
-            logger.info(f"Processing agency: {agency_name}")
-
-            for xml_file in xml_dir.glob("*.xml"):
-                try:
-                    # Extract metadata
-                    title, chapter, date = extract_metadata(xml_file.name)
-                    if not all([title, chapter, date]):
-                        logger.warning(
-                            f"Could not extract metadata from: {xml_file.name}"
-                        )
-                        pbar.update(1)
-                        continue
-
-                    # Process XML and create chunks
-                    chunks = chunk_regulation_xml(xml_file)
-
-                    # Create embeddings and store chunks with progress bar
-                    for chunk_index, (chunk_text, section_metadata) in tqdm(
-                        enumerate(chunks),
-                        desc=f"Processing chunks for {xml_file.name}",
-                        leave=False,
-                    ):
-                        # Create embedding
-                        embedding = model.encode(chunk_text)
-
-                        # Generate embeddings for additional metadata fields
-                        cross_references_embedding = model.encode(
-                            " ".join(section_metadata.get("cross_references", []))
-                        )
-                        definitions_embedding = model.encode(
-                            " ".join(section_metadata.get("definitions", []))
-                        )
-                        authority_embedding = model.encode(
-                            " ".join(section_metadata.get("enforcement_agencies", []))
-                        )
-
-                        # Merge metadata embeddings with the main text embedding
-                        enriched_embedding = np.concatenate(
-                            [
-                                embedding,
-                                cross_references_embedding,
-                                definitions_embedding,
-                                authority_embedding,
-                            ]
-                        )
-
-                        # Create database record
-                        chunk_record = RegulationChunk(
-                            agency=agency_name,
-                            title=title,
-                            chapter=chapter,
-                            date=date,
-                            chunk_text=chunk_text,
-                            chunk_index=chunk_index,
-                            embedding=enriched_embedding.tobytes(),
-                            section=section_metadata.get("section"),
-                            hierarchy=section_metadata.get("hierarchy"),
-                        )
-
-                        session.add(chunk_record)
-
-                    processed_files += 1
-                    logger.info(f"Processed {xml_file.name} into {len(chunks)} chunks")
-
-                    # Commit after each file to avoid memory issues
-                    session.commit()
-
-                except Exception as e:
-                    logger.error(f"Error processing file {xml_file}: {str(e)}")
-                    session.rollback()
-
-                finally:
-                    pbar.update(1)
-
-    logger.info(
-        f"Processing complete. Processed {processed_files} of {total_files} files"
-    )
-    session.close()
+    except ProcessingError as e:
+        logger.error(f"Processing error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        raise ProcessingError(f"Failed to process regulations: {str(e)}") from e
 
 
 def search_similar_chunks(query_text: str, db_url: str, n_results: int = 5):
@@ -352,12 +302,15 @@ def search_similar_chunks(query_text: str, db_url: str, n_results: int = 5):
         results = []
 
         # Get total count for progress tracking
-        total_chunks = session.query(RegulationChunk).count()
+        total_chunks = session.query(BaseRegulationChunk).count()
 
         for offset in tqdm(range(0, total_chunks, batch_size), desc="Searching chunks"):
             # Get batch of chunks
             chunks = (
-                session.query(RegulationChunk).offset(offset).limit(batch_size).all()
+                session.query(BaseRegulationChunk)
+                .offset(offset)
+                .limit(batch_size)
+                .all()
             )
 
             # Convert embeddings to numpy array
@@ -403,20 +356,6 @@ def search_similar_chunks(query_text: str, db_url: str, n_results: int = 5):
         session.close()
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Process and embed regulation documents."
-    )
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config/default.yml"),
-        help="Path to configuration file",
-    )
-    return parser.parse_args()
-
-
 def main():
     """Run the regulation embedding pipeline."""
     parser = argparse.ArgumentParser(
@@ -428,37 +367,35 @@ def main():
         default=Path("config/default.yml"),
         help="Path to configuration file",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Override data directory from config",
+    )
+    parser.add_argument(
+        "--file",
+        type=Path,
+        help="Process a single file instead of directory",
+    )
+
     args = parser.parse_args()
 
     try:
-        # Load configuration
-        print("Loading configuration...")
-        config = Config.from_yaml(args.config)
-
-        # Create database and tables
-        create_db(config.database.db_url)
-
-        # Initialize and run processor
-        print("\nInitializing processor...")
-        processor = RegulationProcessor(config)
-
-        print("\nStarting processing...")
-        processor.process_directory(config.processing.data_dir)
-
-        print("\nProcessing complete!")
-
+        process_regulations(
+            config_path=args.config,
+            data_dir=args.data_dir,
+            single_file=args.file,
+        )
+    except ProcessingError as e:
+        print(f"Error: {str(e)}")
+        exit(1)
+    except KeyboardInterrupt:
+        print("\nProcessing interrupted by user")
+        exit(130)
     except Exception as e:
-        print(f"\nError during processing: {str(e)}")
-        raise
-    finally:
-        print("\nDone")
+        print(f"Unexpected error: {str(e)}")
+        exit(1)
 
 
 if __name__ == "__main__":
-    # Comment out or remove these lines
-    # config = Config.from_yaml(Path("config/default.yml"))
-    # query = "What are the three main types of research misconduct according to USDA regulations?"
-    # results = search_similar_chunks(query, config.database.db_url)
-
-    # Instead, run the main function to process and embed regulations
     main()

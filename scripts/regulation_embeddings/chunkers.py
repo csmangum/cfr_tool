@@ -67,12 +67,27 @@ class XMLChunker(BaseChunker):
         """Clean up text by removing extra whitespace and normalizing quotes."""
         if text is None:
             return ""
-        # More thorough text cleaning
-        text = " ".join(text.split())
-        text = text.replace('"', '"').replace('"', '"')
-        text = text.replace(""", "'").replace(""", "'")
-        text = text.replace("—", "-").replace("–", "-")
+        import re
+
+        # Remove extra whitespace including newlines
+        text = re.sub(r"\s+", " ", text.strip())
+        # Replace smart quotes and dashes with standard versions
+        replacements = {
+            '"': '"',
+            '"': '"',
+            """: "'", """: "'",
+            "—": "-",
+            "–": "-",
+            "…": "...",
+            "\u200b": "",  # zero-width space
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
         return text
+
+    def _extract_text_list(self, elements: List[etree._Element]) -> List[str]:
+        """Helper function to extract and clean text from a list of elements."""
+        return [self.clean_text(elem.text) for elem in elements if elem.text]
 
     def parse_xml(self, document_path: Path) -> etree._Element:
         """
@@ -113,6 +128,7 @@ class XMLChunker(BaseChunker):
         Returns:
             dict: Parsed hierarchy metadata
         """
+        # Try to parse existing hierarchy metadata
         try:
             hierarchy = element.get("hierarchy_metadata")
             if hierarchy:
@@ -121,63 +137,57 @@ class XMLChunker(BaseChunker):
             self.logger.warning(f"Failed to parse hierarchy metadata: {str(e)}")
 
         # Fallback: Build hierarchy from element structure
-        hierarchy = {}
-        for tag, label in self.DIVISION_TAGS.items():
-            parent = element.xpath(f"./ancestor-or-self::{tag}[@N]")
-            if parent:
-                hierarchy[label.lower()] = parent[0].get("N")
-
-        return hierarchy
+        return {
+            label.lower(): parent[0].get("N")
+            for tag, label in self.DIVISION_TAGS.items()
+            if (parent := element.xpath(f"./ancestor-or-self::{tag}[@N]"))
+        }
 
     def extract_section_metadata(self, element: etree._Element) -> Dict:
         """Extract metadata from a section element."""
         metadata = {"hierarchy": self.extract_hierarchy_metadata(element)}
 
-        # Extract cross-references
-        cross_references = element.xpath(".//CROSSREF")
-        if cross_references:
-            metadata["cross_references"] = [self.clean_text(ref.text) for ref in cross_references if ref.text]
-
-        # Extract definitions
-        definitions = element.xpath(".//DEF")
-        if definitions:
-            metadata["definitions"] = [self.clean_text(defn.text) for defn in definitions if defn.text]
-
-        # Extract enforcement agencies
-        enforcement_agencies = element.xpath(".//ENFORCEMENT")
-        if enforcement_agencies:
-            metadata["enforcement_agencies"] = [self.clean_text(agency.text) for agency in enforcement_agencies if agency.text]
-
         # Extract section number and title
         head = element.find("HEAD")
-        if head is not None:
+        if head is not None and head.text:
             head_text = head.text.strip()
-            # Parse section number (§ 301.1)
             if "§" in head_text:
                 section_num = head_text.split("§")[1].strip()
                 metadata["section"] = section_num
-
             metadata["title"] = head_text
 
-        # Extract authority information
-        auth = element.find(".//AUTH")
-        if auth is not None:
-            metadata["authority"] = self.clean_text(auth.text)
+        # Find the parent DIV5 element
+        div5 = element.xpath("./ancestor::DIV5[1]")
+        if div5:
+            div5 = div5[0]
+            # Extract authority and source using helper function
+            for field in ["AUTH", "SOURCE"]:
+                elem = div5.find(f".//{field}")
+                if elem is not None:
+                    elem_copy = etree.fromstring(etree.tostring(elem))
+                    for xref in elem_copy.findall(".//XREF"):
+                        xref.getparent().remove(xref)
+                    text = " ".join(elem_copy.xpath(".//text()")).strip()
+                    metadata[field.lower()] = self.clean_text(text)
 
-        # Extract source information
-        source = element.find(".//SOURCE")
-        if source is not None:
-            metadata["source"] = self.clean_text(source.text)
+        # Extract lists using helper function
+        for field, xpath in [
+            ("cross_references", ".//CROSSREF"),
+            ("definitions", ".//DEF"),
+            ("enforcement_agencies", ".//ENFORCEMENT"),
+        ]:
+            elements = element.xpath(xpath)
+            if elements:
+                metadata[field] = self._extract_text_list(elements)
 
-        # Extract date of last revision
-        last_revision = element.find(".//LASTREV")
-        if last_revision is not None:
-            metadata["date_of_last_revision"] = self.clean_text(last_revision.text)
-
-        # Extract regulatory intent/purpose
-        intent = element.find(".//INTENT")
-        if intent is not None:
-            metadata["regulatory_intent"] = self.clean_text(intent.text)
+        # Extract single value fields
+        for field, xpath in [
+            ("date_of_last_revision", ".//LASTREV"),
+            ("regulatory_intent", ".//INTENT"),
+        ]:
+            elem = element.find(xpath)
+            if elem is not None:
+                metadata[field] = self.clean_text(elem.text)
 
         return metadata
 

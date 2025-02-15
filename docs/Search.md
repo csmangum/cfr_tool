@@ -1,15 +1,19 @@
 # Regulation Search System
 
-The regulation search system uses semantic search with enriched embeddings to find relevant federal regulations based on natural language queries. It leverages metadata-aware embeddings and Faiss vector similarity search to match user questions with regulation chunks.
+The regulation search system uses semantic search with base text embeddings to find relevant federal regulations based on natural language queries. Future enhancements will add metadata-aware embeddings for richer context.
 
 ## Architecture
 
-The search system consists of four main components:
+The search system consists of three main components:
 
-1. **Enriched Embeddings**: Combines text embeddings with metadata embeddings for richer semantic understanding
-2. **Faiss Index**: A vector similarity search index optimized for 1536-dimensional enriched vectors
-3. **SQLite Database**: Stores regulation chunks, metadata, and cross-references
-4. **Metadata Integration**: Enriches search with definitions, cross-references, and authority information
+1. **Text Embeddings**: Generates semantic vectors from regulation text (384 dimensions)
+2. **Faiss Index**: A vector similarity search index optimized for the embedding vectors
+3. **SQLite Database**: Stores regulation chunks and metadata
+
+Future enhancements will add:
+- Metadata-enriched embeddings
+- Cross-reference awareness
+- Definition and authority context
 
 ```mermaid
 graph LR
