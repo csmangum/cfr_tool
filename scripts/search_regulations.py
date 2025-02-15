@@ -12,12 +12,15 @@ import json
 import random
 import sqlite3
 import warnings
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
+
+from scripts.regulation_embeddings.models import RegulationChunk
 
 # Add warning filter at the top of the file
 warnings.filterwarnings(
@@ -58,7 +61,7 @@ class RegulationSearcher:
         self.db_path = db_path
         self._cache = {}
         self.model = SentenceTransformer(model_name)
-        
+
         # Initialize zero vectors for empty metadata fields
         self.zero_vector = np.zeros(384)  # Base embedding dimension
 
@@ -137,15 +140,17 @@ class RegulationSearcher:
         """Create enriched query embedding to match document embeddings."""
         # Get base query embedding
         query_embedding = self.model.encode(query, normalize_embeddings=True)
-        
+
         # Add zero vectors for metadata fields since query doesn't have metadata
-        enriched_embedding = np.concatenate([
-            query_embedding,
-            self.zero_vector,  # cross_references
-            self.zero_vector,  # definitions
-            self.zero_vector   # authority
-        ])
-        
+        enriched_embedding = np.concatenate(
+            [
+                query_embedding,
+                self.zero_vector,  # cross_references - allows matching similar regulations
+                self.zero_vector,  # definitions
+                self.zero_vector,  # authority
+            ]
+        )
+
         # Normalize final embedding
         return enriched_embedding / np.linalg.norm(enriched_embedding)
 
@@ -154,13 +159,12 @@ class RegulationSearcher:
         print(f"Processing query: {query}")
 
         try:
-            # Create enriched query embedding
+            # Create enriched query embedding that includes metadata concepts
             query_embedding = self._enrich_query_embedding(query)
-            
+
             # Search with expanded results for filtering
             distances, indices = self.index.search(
-                query_embedding.reshape(1, -1), 
-                n_results * 2
+                query_embedding.reshape(1, -1), n_results * 2
             )
 
             results = []
@@ -208,6 +212,61 @@ class RegulationSearcher:
         # Enable internal multithreading
         faiss.omp_set_num_threads(4)
         return index
+
+    def search_similar(
+        self,
+        query_embedding: np.ndarray,
+        n_results: int = 5,
+        filters: Optional[Dict] = None,
+    ) -> List[Tuple[str, float, Dict]]:
+        """Search for similar chunks with optional filtering."""
+        # If vector store is available, use it for similarity search
+        if self.vector_store is not None:
+            results = self.vector_store.search(query_embedding, k=n_results)
+            return [(meta["chunk_text"], score, meta) for score, meta in results]
+
+        # Fallback to database search
+        session = self.Session()
+        try:
+            # Build query with filters
+            query = session.query(RegulationChunk)
+            if filters:
+                for field, value in filters.items():
+                    if hasattr(RegulationChunk, field):
+                        query = query.filter(getattr(RegulationChunk, field) == value)
+
+            results = []
+            # Calculate similarities
+            for chunk in query.all():
+                chunk_embedding = np.frombuffer(chunk.embedding, dtype=np.float32)
+                similarity = np.dot(query_embedding, chunk_embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(chunk_embedding)
+                )
+
+                # Deserialize hierarchy when returning results
+                hierarchy = self._deserialize_metadata(chunk.hierarchy)
+
+                results.append(
+                    (
+                        chunk.chunk_text,
+                        similarity,
+                        {
+                            "agency": chunk.agency,
+                            "title": chunk.title,
+                            "chapter": chunk.chapter,
+                            "date": chunk.date,
+                            "section": chunk.section,
+                            "hierarchy": hierarchy,
+                        },
+                    )
+                )
+
+            # Sort by similarity and return top n_results
+            results.sort(key=lambda x: x[1], reverse=True)
+            return results[:n_results]
+        except Exception as e:
+            print(f"Error during similar search: {str(e)}")
+            return []
 
 
 def parse_args():

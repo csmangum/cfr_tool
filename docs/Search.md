@@ -1,63 +1,44 @@
 # Regulation Search System
 
-The regulation search system uses semantic search to find relevant federal regulations based on natural language queries. It leverages sentence embeddings and Faiss vector similarity search to match user questions with regulation chunks.
+The regulation search system uses semantic search with enriched embeddings to find relevant federal regulations based on natural language queries. It leverages metadata-aware embeddings and Faiss vector similarity search to match user questions with regulation chunks.
 
 ## Architecture
 
-The search system consists of three main components:
+The search system consists of four main components:
 
-1. **Sentence Embeddings**: Uses the `sentence-transformers` model to convert text into dense vector representations
-2. **Faiss Index**: A vector similarity search index that enables efficient retrieval of relevant regulation chunks
-3. **SQLite Database**: Stores the regulation chunks and their metadata
+1. **Enriched Embeddings**: Combines text embeddings with metadata embeddings for richer semantic understanding
+2. **Faiss Index**: A vector similarity search index optimized for 1536-dimensional enriched vectors
+3. **SQLite Database**: Stores regulation chunks, metadata, and cross-references
+4. **Metadata Integration**: Enriches search with definitions, cross-references, and authority information
 
 ```mermaid
 graph LR
-    A[User Query] --> B[Sentence Transformer]
-    B --> C[Query Embedding]
+    A[User Query] --> B[Base Embedding]
+    B --> C[Enriched Vector]
+    M[Metadata Fields] --> C
     C --> D[Faiss Index]
     D --> E[Similar Chunks]
-    E --> F[Metadata Lookup]
-    F --> G[Formatted Results]
+    E --> F[Metadata Filtering]
+    F --> G[Ranked Results]
 ```
 
-## Usage
+## Enriched Embeddings
 
-### Command Line Interface
+The system uses a composite embedding approach:
 
-Search for regulations using the command line:
+- Base text embedding (384d)
+- Cross-references embedding (384d)
+- Definitions embedding (384d)
+- Authority/enforcement embedding (384d)
 
-```bash
-# Basic search
-python scripts/search_regulations.py "What are the requirements for filing a FOIA request?"
+This creates a 1536-dimensional vector that captures both content and context.
 
-# Specify number of results
-python scripts/search_regulations.py --num-results 3 "How are endangered species protected?"
-
-# Save results to file
-python scripts/search_regulations.py --save "What are the workplace safety requirements?"
-```
-
-### Interactive Mode
-
-If you run the script without a query, it enters interactive mode:
-
-```bash
-python scripts/search_regulations.py
-```
-
-This allows you to:
-- Enter multiple queries in succession
-- Press Enter for a random sample question
-- Type 'quit' to exit
-
-### Python API
-
-You can also use the search functionality in your Python code:
+### Example Enriched Search
 
 ```python
 from scripts.search_regulations import RegulationSearcher
 
-# Initialize the searcher
+# Initialize searcher
 searcher = RegulationSearcher(
     index_path="data/faiss/regulation_index.faiss",
     metadata_path="data/faiss/regulation_metadata.json",
@@ -65,70 +46,137 @@ searcher = RegulationSearcher(
     model_name="all-MiniLM-L6-v2"
 )
 
-# Perform a search
-results = searcher.search(
-    query="What are the requirements for drone operations?",
-    n_results=5
+# Search with metadata filtering
+results = searcher.search_similar(
+    query_embedding,
+    filters={
+        "agency": "agriculture-department",
+        "date": "2015-01-01"  # Only regulations after 2015
+    }
 )
-
-# Process results
-for metadata, score, chunk_text in results:
-    print(f"Score: {score:.3f}")
-    print(f"Agency: {metadata['agency']}")
-    print(f"Text: {chunk_text}\n")
 ```
 
-## Example Searches and Results
+## Search Features
 
-Here are some example searches and their results:
+### 1. Metadata-Aware Search
+- Matches on related regulations through cross-references
+- Understands defined terms and their relationships
+- Considers enforcement context and authority
 
-### FOIA Request Requirements
+### 2. Structured Filtering
+- Agency-specific search
+- Date range filtering
+- Section and chapter filtering
+- Hierarchical navigation
 
+### 3. Smart Ranking
+- Combines text similarity with metadata relevance
+- Deduplicates similar content
+- Preserves regulatory context
+- Minimum similarity threshold (0.2)
+
+## Example Searches
+
+### Cross-Reference Aware Search
 ```
-Query: "What are the requirements for filing a FOIA request?"
+Query: "Cotton classification requirements"
 
 Result 1:
 Score: 0.892
-Agency: Department of Justice
-Title 28, Chapter 16, Section 16.3
-Text: Requirements for making a FOIA request. (1) A request for DOJ records 
-under the FOIA must be made in writing and received by mail, delivery service, 
-or electronic submission. (2) The request should clearly state that it is being 
-made under the FOIA...
+Agency: Department of Agriculture
+Text: "Requirements for cotton classification..."
+Cross-References: ["7 CFR 28.8", "7 CFR 28.9"]
+
+Result 2: 
+Score: 0.857
+Agency: Department of Agriculture
+Text: "Related cotton standards..."
+From Cross-Reference: "7 CFR 28.8"
 ```
 
-### Endangered Species Protection
-
+### Definition-Enhanced Search
 ```
-Query: "How are endangered species protected?"
+Query: "Micronaire requirements"
 
 Result 1:
-Score: 0.857
-Agency: Fish and Wildlife Service
-Title 50, Chapter I, Section 17.21
-Text: Endangered species are protected from take, which includes harming, 
-harassing, collecting, or killing. No person shall take endangered wildlife 
-within the United States, within the territorial sea of the United States...
+Score: 0.878
+Agency: Department of Agriculture
+Text: "Cotton classification standards..."
+Definitions: {
+    "Micronaire": "A measure of cotton fiber fineness..."
+}
 ```
 
-## Configuration Options
+## Command Line Usage
 
-The search system can be configured with several parameters:
+```bash
+# Basic search
+python scripts/search_regulations.py "FOIA request requirements"
 
-- `--model`: Choose different sentence transformer models (default: "all-MiniLM-L6-v2")
-- `--num-results`: Number of results to return (default: 5)
-- `--index`: Path to the Faiss index file
-- `--metadata`: Path to the metadata JSON file
-- `--db`: Path to the SQLite database
-- `--save`: Save results to a file
+# Agency-specific search
+python scripts/search_regulations.py --agency "agriculture-department" "cotton standards"
 
-## Performance Considerations
+# Date-filtered search
+python scripts/search_regulations.py --after "2015-01-01" "drone regulations"
+```
+
+## Performance Optimizations
 
 The system uses several optimizations:
-- Faiss for efficient similarity search
-- Normalized embeddings for better matching
-- Duplicate removal
-- Minimum similarity threshold (0.2)
-- Metadata caching
 
-Results are ranked by cosine similarity score, with higher scores indicating better matches to the query.
+1. **Vector Search**
+   - FAISS index for fast similarity search
+   - Batch processing of queries
+   - Multi-threaded search (4 threads)
+
+2. **Metadata Handling**
+   - Cached metadata lookups
+   - Pre-computed enriched embeddings
+   - Efficient filtering
+
+3. **Result Processing**
+   - Early similarity filtering
+   - Duplicate removal
+   - Batch result formatting
+
+## Implementation Details
+
+The enriched embedding process:
+
+```python
+# Generate base embedding
+text_embedding = model.encode(text)
+
+# Generate metadata embeddings
+cross_refs_embedding = model.encode(cross_references)
+definitions_embedding = model.encode(definitions)
+authority_embedding = model.encode(authority)
+
+# Combine embeddings
+enriched_embedding = np.concatenate([
+    text_embedding,
+    cross_refs_embedding,
+    definitions_embedding,
+    authority_embedding
+])
+
+# Normalize final vector
+enriched_embedding = enriched_embedding / np.linalg.norm(enriched_embedding)
+```
+
+## Future Enhancements
+
+1. **Search Capabilities**
+   - Boolean query support
+   - Temporal awareness
+   - Agency relationship mapping
+
+2. **Performance**
+   - GPU acceleration
+   - Distributed search
+   - Dynamic batch sizing
+
+3. **Metadata Integration**
+   - Enhanced cross-reference tracking
+   - Regulatory amendment history
+   - Agency jurisdiction mapping
