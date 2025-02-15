@@ -216,34 +216,77 @@ def main():
     )
     args = parser.parse_args()
 
-    # If no query provided via command line, ask for input
+    # Load resources once at startup
+    print(f"Loading embedding model: {args.model}")
+    model = SentenceTransformer(args.model)
+
+    index = load_faiss_index(args.index)
+    metadata = load_metadata(args.metadata)
+
+    # Get initial query from command line args
     query = args.query
-    if not query:
-        query = input(
-            "Enter your search query (press Enter for a random question): "
-        ).strip()
+
+    while True:
+        # If no query, ask for input
         if not query:
-            query = random.choice(SAMPLE_QUESTIONS)
-            print(f"\nUsing random question: {query}")
+            query = input(
+                "\nEnter your search query (press Enter for a random question, 'quit' to exit): "
+            ).strip()
+            if query.lower() == "quit":
+                break
+            if not query:
+                query = random.choice(SAMPLE_QUESTIONS)
+                print(f"\nUsing random question: {query}")
 
-    try:
-        # Perform the search
-        results = search_regulations(
-            query, args.index, args.metadata, args.db, args.model, args.num_results
-        )
+        try:
+            # Create query embedding
+            print(f"Processing query: {query}")
+            query_embedding = model.encode([query])[0]
+            query_embedding = query_embedding.astype(np.float32)
 
-        # Print results
-        print(f"\nSearch Query: {query}\n")
-        print(f"Found {len(results)} results:\n")
+            # Normalize the query embedding for cosine similarity
+            faiss.normalize_L2(query_embedding.reshape(1, -1))
 
-        for idx, (metadata, score, chunk_text) in enumerate(results, 1):
-            print(f"Result {idx}:")
-            print(format_result(metadata, score, chunk_text))
-            print("-" * 80 + "\n")
+            # Search the index
+            distances, indices = index.search(
+                query_embedding.reshape(1, -1), args.num_results
+            )
 
-    except Exception as e:
-        print(f"Error performing search: {e}")
-        return 1
+            # Format results
+            results = []
+            for idx, (distance, index_id) in enumerate(
+                zip(distances[0], indices[0]), 1
+            ):
+                if (
+                    index_id == -1
+                ):  # Faiss returns -1 for padding when there are fewer results
+                    continue
+
+                # Convert distance to similarity score (1 - normalized_distance)
+                similarity = 1 - (distance / 2)  # Assuming normalized vectors
+
+                # Get metadata for this result
+                result_metadata = metadata.get(str(index_id))  # JSON keys are strings
+                if result_metadata:
+                    chunk_text = load_chunk_text(args.db, index_id)
+                    if chunk_text != "Chunk text not found":
+                        results.append((result_metadata, similarity, chunk_text))
+
+            # Print results
+            print(f"\nSearch Query: {query}\n")
+            print(f"Found {len(results)} results:\n")
+
+            for idx, (metadata_item, score, chunk_text) in enumerate(results, 1):
+                print(f"Result {idx}:")
+                print(format_result(metadata_item, score, chunk_text))
+                print("-" * 80 + "\n")
+
+        except Exception as e:
+            print(f"Error performing search: {e}")
+            return 1
+
+        # Reset query for next iteration
+        query = None
 
     return 0
 
