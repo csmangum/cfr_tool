@@ -21,7 +21,13 @@ import plotly.express as px
 import streamlit as st
 from openai import OpenAI
 
-from scripts.search_regulations import SAMPLE_QUESTIONS, RegulationSearcher
+from scripts.search_regulations import (
+    SAMPLE_QUESTIONS,
+    RegulationSearcher,
+    BooleanQueryProcessor,
+    TemporalSearchEnhancer,
+    AgencyRelationshipMapper,
+)
 
 # Add the project root to Python path
 project_root = Path(__file__).parent.parent

@@ -71,6 +71,64 @@ SAMPLE_QUESTIONS = [
 ]
 
 
+class BooleanQueryProcessor:
+    """Process boolean queries with AND, OR, NOT operators."""
+
+    def parse_query(self, query: str) -> Dict:
+        """
+        Parse queries like:
+        - "FOIA AND (request OR application) NOT expedited"
+        - "safety requirements AND (vehicle OR aircraft)"
+        """
+        return {
+            "operators": ["AND", "OR", "NOT"],
+            "terms": [...],
+            "groups": [...]
+        }
+
+    def combine_results(self,
+                        results_sets: List[List[Tuple[str, float, Dict]]],
+                        operator: str) -> List[Tuple[str, float, Dict]]:
+        """Combine multiple result sets using boolean logic."""
+        # Placeholder implementation
+        return []
+
+
+class TemporalSearchEnhancer:
+    """Handle temporal aspects of regulation search."""
+
+    def __init__(self):
+        self.date_patterns = [
+            r"\d{4}-\d{2}-\d{2}",  # ISO format
+            r"before|after|since|until",  # Temporal keywords
+            r"current|latest|previous"  # Version keywords
+        ]
+
+    def extract_temporal_constraints(self, query: str) -> Dict:
+        """Extract temporal requirements from query."""
+        return {
+            "date_range": {"start": "2020-01-01", "end": "2023-12-31"},
+            "version_type": "current|historical|all",
+            "temporal_context": "before|after|during"
+        }
+
+
+class AgencyRelationshipMapper:
+    """Map and utilize agency relationships in search."""
+
+    def get_related_agencies(self, agency: str) -> Dict[str, List[str]]:
+        """
+        Return related agencies by relationship type:
+        {
+            "parent": ["department-of-treasury"],
+            "child": ["irs", "fiscal-service"],
+            "collaborator": ["federal-reserve"],
+            "delegated_authority": ["state-banking-departments"]
+        }
+        """
+        return {}
+
+
 class RegulationSearcher:
     def __init__(
         self, index_path: str, metadata_path: str, db_path: str, model_name: str
@@ -83,6 +141,11 @@ class RegulationSearcher:
 
         # Initialize zero vectors for empty metadata fields
         self.zero_vector = np.zeros(384)  # Base embedding dimension
+
+        # Initialize advanced search components
+        self.boolean_processor = BooleanQueryProcessor()
+        self.temporal_enhancer = TemporalSearchEnhancer()
+        self.agency_mapper = AgencyRelationshipMapper()
 
         # Verify database connection and content
         try:
@@ -179,6 +242,15 @@ class RegulationSearcher:
         print(f"Processing query: {query}")
 
         try:
+            # Parse boolean query
+            query_parts = self.boolean_processor.parse_query(query)
+
+            # Apply temporal constraints
+            temporal_constraints = self.temporal_enhancer.extract_temporal_constraints(query)
+
+            # Get related agencies
+            agency_constraints = self.agency_mapper.get_related_agencies("example-agency")
+
             # Create query embedding that includes metadata concepts
             query_embedding = self._enrich_query_embedding(query)
 

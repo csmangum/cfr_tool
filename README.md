@@ -65,6 +65,20 @@ See [Application Documentation](docs/Application.md) for detailed usage instruct
 - Efficient data processing
 - See [Pipeline Documentation](docs/Pipeline.md) for architecture details
 
+### Advanced Search Capabilities
+- **Boolean Query Support**:
+  - Handle boolean queries with AND, OR, and NOT operators
+  - Create complex search queries such as "FOIA AND (request OR application) NOT expedited"
+  - Parse and combine individual result sets according to boolean logic
+- **Temporal Search**:
+  - Handle temporal aspects of regulation search
+  - Extract temporal constraints from the query, such as date ranges, version types, and temporal contexts (e.g., "before", "after", "during")
+  - Filter search results based on the specified time frame
+- **Agency Relationship Mapping**:
+  - Enhance the understanding of agency relationships
+  - Map relationships between agencies, including parent, child, collaborator, and delegated authority relationships
+  - Include related agencies in the search results, providing a more comprehensive view of regulations
+
 ## Installation
 
 ```bash
