@@ -5,13 +5,14 @@ Run with: streamlit run scripts/streamlit_search.py
 """
 
 import json
+import logging
 import random
 import sys
 import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Counter, Dict, List, Optional, Tuple
+from typing import Counter, Dict, List
 
 import altair as alt
 import numpy as np
@@ -19,7 +20,6 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from openai import OpenAI
-import logging
 
 from scripts.search_regulations import SAMPLE_QUESTIONS, RegulationSearcher
 
@@ -49,38 +49,35 @@ if "evaluations" not in st.session_state:
 if "ai_evaluations" not in st.session_state:
     st.session_state.ai_evaluations = {}
 
+
 def setup_openai_logging():
     """Setup logging for OpenAI API interactions."""
     try:
-        # Get absolute path to project root
-        project_root = Path(__file__).parent.parent.resolve()
-        log_dir = project_root / "logs"
+        log_dir = Path("data/logs")
         log_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create a logger
-        logger = logging.getLogger('openai')
+        logger = logging.getLogger("openai")
         logger.setLevel(logging.INFO)
-        
+
         # Remove any existing handlers to avoid duplicates
         logger.handlers = []
-        
+
         # Create a file handler with absolute path
         log_file = log_dir / f"openai_{datetime.now().strftime('%Y%m%d')}.log"
-        handler = logging.FileHandler(log_file, encoding='utf-8')
+        handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setLevel(logging.INFO)
-        
+
         # Create a formatting for the logs
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s'
-        )
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         handler.setFormatter(formatter)
-        
+
         # Add the handler to the logger
         logger.addHandler(handler)
-        
+
         # Log the initialization
         logger.info(f"OpenAI logging initialized. Logging to: {log_file}")
-        
+
         return logger
     except Exception as e:
         st.error(f"Error setting up logging: {str(e)}")
@@ -88,24 +85,25 @@ def setup_openai_logging():
         st.error(f"File location: {Path(__file__)}")
         return None
 
+
 class ChatCompletions:
     def __init__(self, client, logger):
         self.client = client
         self.logger = logger
-    
+
     def create(self, **kwargs):
         """Log the chat completion request and response."""
         try:
             if self.logger:
                 # Log the request
                 self.logger.info(f"OpenAI Request: {kwargs}")
-                
+
                 # Make the API call
                 response = self.client.chat.completions.create(**kwargs)
-                
+
                 # Log the response
                 self.logger.info(f"OpenAI Response: {response}")
-                
+
                 return response
             else:
                 # If logger failed to initialize, just make the API call
@@ -115,30 +113,68 @@ class ChatCompletions:
                 self.logger.error(f"OpenAI Error: {str(e)}")
             raise
 
+
 class Chat:
     def __init__(self, client, logger):
         self.completions = ChatCompletions(client, logger)
 
+
 class LoggedOpenAI:
     """Wrapper around OpenAI client that logs all interactions."""
+
     def __init__(self):
         self.client = OpenAI()
         self.logger = setup_openai_logging()
         self.chat = Chat(self.client, self.logger)
 
+
 def initialize_searcher() -> RegulationSearcher:
     """Initialize the regulation searcher with default paths."""
     # Use session state to cache the searcher
     if "searcher" not in st.session_state:
-        searcher = RegulationSearcher(
-            index_path="data/faiss/regulation_index.faiss",
-            metadata_path="data/faiss/regulation_metadata.json",
-            db_path="data/db/regulation_embeddings.db",
-            model_name="all-MiniLM-L6-v2",
-        )
-        # Add logged OpenAI client
-        searcher.client = LoggedOpenAI()
-        st.session_state.searcher = searcher
+        try:
+            # Define paths relative to project root
+            index_path = "data/faiss/regulation_index.faiss"
+            metadata_path = "data/faiss/regulation_metadata.json"
+            db_path = "data/db/regulation_embeddings.db"
+
+            # Check if files exist
+            if not Path(index_path).exists():
+                raise FileNotFoundError(
+                    f"FAISS index not found at {index_path}. "
+                    "Please ensure you have run the embedding pipeline to generate the index."
+                )
+            if not Path(metadata_path).exists():
+                raise FileNotFoundError(
+                    f"Metadata file not found at {metadata_path}. "
+                    "Please ensure you have run the embedding pipeline."
+                )
+            if not Path(db_path).exists():
+                raise FileNotFoundError(
+                    f"Database not found at {db_path}. "
+                    "Please ensure you have run the data processing pipeline."
+                )
+
+            searcher = RegulationSearcher(
+                index_path=index_path,
+                metadata_path=metadata_path,
+                db_path=db_path,
+                model_name="all-MiniLM-L6-v2",
+            )
+            # Add logged OpenAI client
+            searcher.client = LoggedOpenAI()
+            st.session_state.searcher = searcher
+
+        except Exception as e:
+            st.error(f"Error initializing search: {str(e)}")
+            st.error(
+                "Please ensure all required files are present in the correct locations:"
+            )
+            st.error(f"- FAISS index: {index_path}")
+            st.error(f"- Metadata file: {metadata_path}")
+            st.error(f"- Database: {db_path}")
+            raise
+
     return st.session_state.searcher
 
 
@@ -189,20 +225,11 @@ def save_evaluation(
 
         st.session_state.evaluations.append(evaluation)
 
-        # Get absolute path to project root
-        project_root = Path(__file__).parent.parent.resolve()
-        eval_dir = project_root / "data" / "evaluations"
-        
-        # Create directories if they don't exist
+        eval_dir = Path("data/evaluations")
         eval_dir.mkdir(parents=True, exist_ok=True)
-        
+
         eval_file = eval_dir / "search_evaluations.json"
-        
-        # Log the paths for debugging
-        print(f"Project root: {project_root}")
-        print(f"Evaluation directory: {eval_dir}")
-        print(f"Evaluation file: {eval_file}")
-        
+
         # Load existing evaluations
         existing_evals = []
         if eval_file.exists():
@@ -210,124 +237,141 @@ def save_evaluation(
                 with eval_file.open("r", encoding="utf-8") as f:
                     existing_evals = json.load(f)
             except json.JSONDecodeError:
-                st.warning(f"Could not read existing evaluations from {eval_file}. Starting fresh.")
-        
+                st.warning(
+                    f"Could not read existing evaluations from {eval_file}. Starting fresh."
+                )
+
         # Append new evaluation
         existing_evals.append(evaluation)
 
         # Save updated evaluations
         with eval_file.open("w", encoding="utf-8") as f:
             json.dump(existing_evals, f, indent=2, ensure_ascii=False)
-            
+
         st.success(f"Evaluation saved to {eval_file}")
-        
+
     except Exception as e:
         st.error(f"Error saving evaluation: {str(e)}")
         st.error(f"Current directory: {Path.cwd()}")
         st.error(f"File location: {Path(__file__)}")
-        st.error(f"Attempted to save to: {eval_file if 'eval_file' in locals() else 'unknown path'}")
+        st.error(
+            f"Attempted to save to: {eval_file if 'eval_file' in locals() else 'unknown path'}"
+        )
 
 
 def calculate_query_stats(evaluations: List[Dict]) -> Dict:
     """Calculate statistics about query performance."""
-    query_stats = defaultdict(
-        lambda: {
-            "count": 0,
-            "avg_relevance": 0.0,
-            "avg_quality": 0.0,
-            "total_ratings": 0,
-        }
-    )
+    try:
+        # Load evaluations from file if not provided
+        if not evaluations:
+            eval_file = Path("data/evaluations/search_evaluations.json")
+            if eval_file.exists():
+                with eval_file.open("r", encoding="utf-8") as f:
+                    evaluations = json.load(f)
 
-    for eval in evaluations:
-        query = eval["query"]
-        query_stats[query]["count"] += 1
-
-        relevance_sum = sum(
-            RELEVANCE_SCORES[r["relevance"]] for r in eval["ratings"].values()
+        query_stats = defaultdict(
+            lambda: {
+                "count": 0,
+                "avg_relevance": 0.0,
+                "avg_quality": 0.0,
+                "total_ratings": 0,
+            }
         )
-        quality_sum = sum(
-            QUALITY_SCORES[r["quality"]] for r in eval["ratings"].values()
-        )
-        num_ratings = len(eval["ratings"])
 
-        current_stats = query_stats[query]
-        current_stats["total_ratings"] += num_ratings
-        current_stats["avg_relevance"] = (
-            current_stats["avg_relevance"] * (current_stats["count"] - 1)
-            + relevance_sum / num_ratings
-        ) / current_stats["count"]
-        current_stats["avg_quality"] = (
-            current_stats["avg_quality"] * (current_stats["count"] - 1)
-            + quality_sum / num_ratings
-        ) / current_stats["count"]
+        for eval in evaluations:
+            query = eval["query"]
+            query_stats[query]["count"] += 1
 
-    return dict(query_stats)
+            relevance_sum = sum(
+                RELEVANCE_SCORES[r["relevance"]] for r in eval["ratings"].values()
+            )
+            quality_sum = sum(
+                QUALITY_SCORES[r["quality"]] for r in eval["ratings"].values()
+            )
+            num_ratings = len(eval["ratings"])
+
+            current_stats = query_stats[query]
+            current_stats["total_ratings"] += num_ratings
+            current_stats["avg_relevance"] = (
+                current_stats["avg_relevance"] * (current_stats["count"] - 1)
+                + relevance_sum / num_ratings
+            ) / current_stats["count"]
+            current_stats["avg_quality"] = (
+                current_stats["avg_quality"] * (current_stats["count"] - 1)
+                + quality_sum / num_ratings
+            ) / current_stats["count"]
+
+        return dict(query_stats)
+    except Exception as e:
+        st.error(f"Error calculating query stats: {str(e)}")
+        return {}
 
 
 def analyze_feedback_themes(evaluations: List[Dict]) -> Counter:
     """Analyze common themes in feedback."""
-    themes = Counter()
+    try:
+        # Load evaluations from file if not provided
+        if not evaluations:
+            eval_file = Path("data/evaluations/search_evaluations.json")
+            if eval_file.exists():
+                with eval_file.open("r", encoding="utf-8") as f:
+                    evaluations = json.load(f)
 
-    # Keywords to look for in feedback
-    theme_keywords = {
-        "irrelevant": ["irrelevant", "unrelated", "wrong", "not relevant"],
-        "outdated": ["outdated", "old", "expired", "not current"],
-        "incomplete": ["incomplete", "partial", "missing", "not enough"],
-        "helpful": ["helpful", "useful", "good", "excellent"],
-        "unclear": ["unclear", "confusing", "vague", "hard to understand"],
-    }
+        themes = Counter()
 
-    for eval in evaluations:
-        # Check overall feedback
-        feedback_text = eval["feedback"].lower()
+        # Keywords to look for in feedback
+        theme_keywords = {
+            "irrelevant": ["irrelevant", "unrelated", "wrong", "not relevant"],
+            "outdated": ["outdated", "old", "expired", "not current"],
+            "incomplete": ["incomplete", "partial", "missing", "not enough"],
+            "helpful": ["helpful", "useful", "good", "excellent"],
+            "unclear": ["unclear", "confusing", "vague", "hard to understand"],
+        }
 
-        # Check specific feedback for each result
-        for rating in eval["ratings"].values():
-            if rating["feedback"]:
-                feedback_text += " " + rating["feedback"].lower()
+        for eval in evaluations:
+            # Check overall feedback
+            feedback_text = eval["feedback"].lower()
 
-        # Count themes
-        for theme, keywords in theme_keywords.items():
-            if any(keyword in feedback_text for keyword in keywords):
-                themes[theme] += 1
+            # Check specific feedback for each result
+            for rating in eval["ratings"].values():
+                if rating["feedback"]:
+                    feedback_text += " " + rating["feedback"].lower()
 
-    return themes
+            # Count themes
+            for theme, keywords in theme_keywords.items():
+                if any(keyword in feedback_text for keyword in keywords):
+                    themes[theme] += 1
+
+        return themes
+    except Exception as e:
+        st.error(f"Error analyzing feedback themes: {str(e)}")
+        return Counter()
 
 
 def auto_evaluate_result(result: Dict, query: str) -> Dict:
     """Automatically evaluate search result using GPT-4."""
     try:
-        # Format prompt for GPT-4
-        prompt = f"""Evaluate this search result for relevance and quality:
-Query: {query}
-Text: {result['Text']}
-Metadata: Agency: {result['Agency']}, Title: {result['Title']}, Section: {result['Section']}
+        # Optimized prompt with fewer tokens
+        prompt = f"""Evaluate relevance and quality:
+Q: {query}
+Text: {result['Text'][:500]}... # Truncate long texts
+Meta: {result['Agency']}, {result['Title']}, {result['Section']}
 
-Provide your evaluation in two parts:
+Return exactly:
+{{"relevance": ["Not Relevant"|"Somewhat Relevant"|"Relevant"|"Very Relevant"], 
+"quality": ["Poor"|"Fair"|"Good"|"Excellent"]}}
+Brief explanation"""
 
-1. A Python dictionary with these exact keys and values:
-{{
-    "relevance": one of ["Not Relevant", "Somewhat Relevant", "Relevant", "Very Relevant"],
-    "quality": one of ["Poor", "Fair", "Good", "Excellent"]
-}}
-
-2. A brief explanation of your ratings.
-
-Format your response exactly like this:
-{{"relevance": "Relevant", "quality": "Good"}}
-Your explanation here..."""
-
-        # Get GPT-4 response
         response = st.session_state.searcher.client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=150,  # Limit response length
         )
 
         # Split response into dict and explanation
         response_text = response.choices[0].message.content
-        dict_end = response_text.find('}') + 1
+        dict_end = response_text.find("}") + 1
         ratings_dict = json.loads(response_text[:dict_end])
         explanation = response_text[dict_end:].strip()
 
@@ -336,7 +380,9 @@ Your explanation here..."""
             "explanation": explanation,
             "timestamp": datetime.now().isoformat(),
             "query": query,
-            "result": result
+            "result": {
+                k: v for k, v in result.items() if k != "Text"
+            },  # Don't store full text
         }
     except Exception as e:
         st.error(f"AI evaluation failed: {str(e)}")
@@ -346,12 +392,11 @@ Your explanation here..."""
 def save_ai_evaluation(ai_rating: Dict):
     """Save AI evaluation results to a separate file."""
     try:
-        project_root = Path(__file__).parent.parent
-        eval_dir = project_root / "data" / "evaluations"
+        eval_dir = Path("data/evaluations")
         eval_dir.mkdir(parents=True, exist_ok=True)
-        
+
         ai_eval_file = eval_dir / "ai_evaluations.json"
-        
+
         # Load existing evaluations
         existing_evals = []
         if ai_eval_file.exists():
@@ -360,16 +405,16 @@ def save_ai_evaluation(ai_rating: Dict):
                     existing_evals = json.load(f)
             except json.JSONDecodeError:
                 st.warning(f"Could not read existing AI evaluations. Starting fresh.")
-        
+
         # Append new evaluation
         existing_evals.append(ai_rating)
 
         # Save updated evaluations
         with ai_eval_file.open("w", encoding="utf-8") as f:
             json.dump(existing_evals, f, indent=2, ensure_ascii=False)
-            
+
         st.success(f"AI evaluation saved to {ai_eval_file}")
-        
+
     except Exception as e:
         st.error(f"Error saving AI evaluation: {str(e)}")
 
@@ -377,44 +422,43 @@ def save_ai_evaluation(ai_rating: Dict):
 def generate_overall_feedback(results: List[Dict], ai_evaluations: Dict) -> str:
     """Generate overall feedback based on AI evaluations of results."""
     try:
-        # Collect all evaluations
+        # Collect only essential evaluation data
         evaluations_summary = []
         for idx, (metadata_item, score, _) in enumerate(results, 1):
             result_key = f"ai_eval_result_{metadata_item.get('section', '')}_{idx}"
             if result_key in ai_evaluations:
                 eval_data = ai_evaluations[result_key]
-                evaluations_summary.append({
-                    'relevance': eval_data['ratings']['relevance'],
-                    'quality': eval_data['ratings']['quality'],
-                    'explanation': eval_data['explanation']
-                })
+                evaluations_summary.append(
+                    {
+                        "r": eval_data["ratings"]["relevance"],
+                        "q": eval_data["ratings"]["quality"],
+                    }
+                )
 
         if not evaluations_summary:
-            return "No AI evaluations available yet. Use the AI evaluation buttons above to generate feedback."
+            return "No AI evaluations available. Use evaluation buttons above."
 
-        # Create prompt for overall analysis
-        prompt = f"""Based on these {len(evaluations_summary)} result evaluations:
+        # Optimized prompt
+        prompt = f"""Assess {len(evaluations_summary)} results:
+{json.dumps(evaluations_summary)}
 
-{json.dumps(evaluations_summary, indent=2)}
+1. Overall quality/relevance
+2. Key strengths/weaknesses
+3. Improvement suggestions
 
-Provide a brief overall assessment of the search results that includes:
-1. General quality and relevance of the results
-2. Key strengths and weaknesses
-3. Suggestions for improving the search
+Be concise."""
 
-Keep your response concise and actionable."""
-
-        # Get GPT-4 response
         response = st.session_state.searcher.client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=200,  # Limit response length
         )
 
         return response.choices[0].message.content
 
     except Exception as e:
-        return f"Error generating overall feedback: {str(e)}"
+        return f"Error generating feedback: {str(e)}"
 
 
 def generate_random_question() -> str:
@@ -441,6 +485,328 @@ Examples:
     except Exception as e:
         st.error(f"Error generating random question: {str(e)}")
         return random.choice(SAMPLE_QUESTIONS)  # Fallback to predefined questions
+
+
+def analyze_advanced_metrics(evaluations: List[Dict]) -> Dict:
+    """Calculate advanced metrics from evaluation data."""
+    try:
+        metrics = {
+            "agency_performance": defaultdict(list),
+            "time_of_day_stats": defaultdict(list),
+            "query_length_impact": [],
+            "response_times": [],
+            "section_relevance": defaultdict(list),
+            "topic_clusters": defaultdict(int),
+            "user_engagement": {
+                "feedback_rate": 0,
+                "ai_eval_rate": 0,
+                "detailed_feedback_rate": 0,
+            },
+        }
+
+        for eval in evaluations:
+            # Time of day analysis
+            timestamp = pd.to_datetime(eval["timestamp"])
+            hour = timestamp.hour
+
+            # Query analysis
+            query_length = len(eval["query"].split())
+
+            # Process each result
+            for result in eval["results"]:
+                # Agency performance
+                metrics["agency_performance"][result["Agency"]].append(
+                    RELEVANCE_SCORES[
+                        eval["ratings"].get(str(1), {}).get("relevance", "Not Relevant")
+                    ]
+                )
+
+                # Section relevance
+                if result["Section"] != "N/A":
+                    metrics["section_relevance"][result["Section"]].append(
+                        RELEVANCE_SCORES[
+                            eval["ratings"]
+                            .get(str(1), {})
+                            .get("relevance", "Not Relevant")
+                        ]
+                    )
+
+            # Query length impact
+            avg_relevance = np.mean(
+                [RELEVANCE_SCORES[r["relevance"]] for r in eval["ratings"].values()]
+            )
+            metrics["query_length_impact"].append((query_length, avg_relevance))
+
+            # User engagement
+            has_feedback = bool(eval.get("feedback"))
+            has_detailed_feedback = any(
+                r.get("feedback") for r in eval["ratings"].values()
+            )
+            metrics["user_engagement"]["feedback_rate"] += int(has_feedback)
+            metrics["user_engagement"]["detailed_feedback_rate"] += int(
+                has_detailed_feedback
+            )
+
+        # Calculate averages and normalize
+        total_evals = len(evaluations)
+        if total_evals > 0:
+            metrics["user_engagement"] = {
+                k: v / total_evals for k, v in metrics["user_engagement"].items()
+            }
+
+        return metrics
+    except Exception as e:
+        st.error(f"Error calculating advanced metrics: {str(e)}")
+        return {}
+
+
+def visualize_advanced_metrics(metrics: Dict):
+    """Create visualizations for advanced metrics."""
+
+    # 1. Agency Performance Heatmap
+    st.markdown("### Agency Performance Heatmap")
+    agency_scores = {
+        agency: np.mean(scores)
+        for agency, scores in metrics["agency_performance"].items()
+        if scores  # Only include agencies with data
+    }
+    if agency_scores:
+        agency_df = pd.DataFrame(
+            list(agency_scores.items()), columns=["Agency", "Average Score"]
+        ).sort_values("Average Score", ascending=False)
+
+        fig = px.imshow(
+            [agency_df["Average Score"]],
+            labels=dict(x="Agency", y="", color="Score"),
+            x=agency_df["Agency"],
+            aspect="auto",
+            title="Agency Performance Heatmap",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 2. Query Length Impact
+    st.markdown("### Query Length Impact on Relevance")
+    query_df = pd.DataFrame(
+        metrics["query_length_impact"], columns=["Query Length", "Average Relevance"]
+    )
+    if not query_df.empty:
+        fig = px.scatter(
+            query_df,
+            x="Query Length",
+            y="Average Relevance",
+            trendline="ols",
+            title="Impact of Query Length on Result Relevance",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 3. User Engagement Metrics
+    st.markdown("### User Engagement Metrics")
+    engagement_df = pd.DataFrame(
+        {
+            "Metric": ["Feedback Rate", "Detailed Feedback Rate", "AI Evaluation Rate"],
+            "Rate": [
+                metrics["user_engagement"]["feedback_rate"],
+                metrics["user_engagement"]["detailed_feedback_rate"],
+                metrics["user_engagement"]["ai_eval_rate"],
+            ],
+        }
+    )
+
+    fig = px.bar(
+        engagement_df,
+        x="Metric",
+        y="Rate",
+        title="User Engagement Rates",
+        text_auto=True,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 4. Section Performance
+    st.markdown("### Section Performance")
+    section_scores = {
+        section: np.mean(scores)
+        for section, scores in metrics["section_relevance"].items()
+        if scores and len(scores) >= 5  # Only include sections with sufficient data
+    }
+    if section_scores:
+        section_df = pd.DataFrame(
+            list(section_scores.items()), columns=["Section", "Average Score"]
+        ).sort_values("Average Score", ascending=False)
+
+        fig = px.bar(
+            section_df,
+            x="Section",
+            y="Average Score",
+            title="Average Relevance Score by Section",
+            labels={"Average Score": "Relevance Score"},
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def analyze_openai_logs(log_file: Path) -> Dict:
+    """Analyze OpenAI API usage from logs."""
+    try:
+        metrics = {
+            "requests_by_type": defaultdict(int),
+            "token_usage": [],
+            "response_times": [],
+            "completion_tokens": [],
+            "prompt_tokens": [],
+            "total_cost": 0,  # Assuming GPT-4 pricing
+            "hourly_usage": defaultdict(int),
+            "error_rates": defaultdict(int),
+        }
+
+        # GPT-4 pricing per 1k tokens (approximate)
+        PROMPT_COST = 0.03
+        COMPLETION_COST = 0.06
+
+        # Open file with UTF-8 encoding and error handling
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    if "OpenAI Request" in line or "OpenAI Response" in line:
+                        timestamp = pd.to_datetime(line.split(" - ")[0])
+                        if "Request" in line:
+                            # Parse request data safely
+                            try:
+                                request_str = line.split("Request: ")[1].strip()
+                                request_data = eval(request_str)
+                                metrics["requests_by_type"][
+                                    request_data.get("model", "unknown")
+                                ] += 1
+                                metrics["hourly_usage"][timestamp.hour] += 1
+                            except Exception as e:
+                                metrics["error_rates"][
+                                    f"Request Parse Error: {str(e)}"
+                                ] += 1
+                                continue
+
+                        elif "Response" in line:
+                            # Parse response data safely
+                            try:
+                                response_str = line.split("Response: ")[1].strip()
+                                response_data = eval(response_str)
+                                if hasattr(response_data, "usage"):
+                                    usage = response_data.usage
+                                    metrics["completion_tokens"].append(
+                                        usage.completion_tokens
+                                    )
+                                    metrics["prompt_tokens"].append(usage.prompt_tokens)
+                                    metrics["token_usage"].append(usage.total_tokens)
+
+                                    # Calculate cost
+                                    prompt_cost = (
+                                        usage.prompt_tokens / 1000
+                                    ) * PROMPT_COST
+                                    completion_cost = (
+                                        usage.completion_tokens / 1000
+                                    ) * COMPLETION_COST
+                                    metrics["total_cost"] += (
+                                        prompt_cost + completion_cost
+                                    )
+                            except Exception as e:
+                                metrics["error_rates"][
+                                    f"Response Parse Error: {str(e)}"
+                                ] += 1
+                                continue
+                except Exception as e:
+                    metrics["error_rates"][f"Line Parse Error: {str(e)}"] += 1
+                    continue
+
+        return metrics
+    except Exception as e:
+        st.error(f"Error analyzing OpenAI logs: {str(e)}")
+        return {}
+
+
+def visualize_openai_metrics(metrics: Dict):
+    """Create visualizations for OpenAI API usage metrics."""
+    st.markdown("## OpenAI API Usage Analytics")
+
+    # 1. Token Usage Overview
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        total_tokens = sum(metrics["token_usage"])
+        st.metric("Total Tokens Used", f"{total_tokens:,}")
+    with col2:
+        avg_tokens = np.mean(metrics["token_usage"]) if metrics["token_usage"] else 0
+        st.metric("Average Tokens per Request", f"{avg_tokens:.1f}")
+    with col3:
+        st.metric("Estimated Cost", f"${metrics['total_cost']:.2f}")
+
+    # 2. Token Usage Distribution
+    st.markdown("### Token Usage Distribution")
+    token_df = pd.DataFrame(
+        {
+            "Prompt Tokens": metrics["prompt_tokens"],
+            "Completion Tokens": metrics["completion_tokens"],
+        }
+    )
+
+    fig = px.box(
+        token_df.melt(),
+        y="value",
+        x="variable",
+        title="Token Usage Distribution by Type",
+        labels={"value": "Number of Tokens", "variable": "Token Type"},
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 3. Hourly Usage Pattern
+    st.markdown("### Hourly Usage Pattern")
+    hourly_df = pd.DataFrame(
+        list(metrics["hourly_usage"].items()), columns=["Hour", "Requests"]
+    ).sort_values("Hour")
+
+    fig = px.line(
+        hourly_df,
+        x="Hour",
+        y="Requests",
+        title="API Requests by Hour",
+        labels={"Requests": "Number of Requests"},
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 4. Model Usage Distribution
+    st.markdown("### Model Usage Distribution")
+    model_df = pd.DataFrame(
+        list(metrics["requests_by_type"].items()), columns=["Model", "Requests"]
+    ).sort_values("Requests", ascending=False)
+
+    fig = px.pie(
+        model_df, values="Requests", names="Model", title="Requests by Model Type"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 5. Error Analysis
+    if metrics["error_rates"]:
+        st.markdown("### Error Analysis")
+        error_df = pd.DataFrame(
+            list(metrics["error_rates"].items()), columns=["Error Type", "Count"]
+        ).sort_values("Count", ascending=False)
+
+        fig = px.bar(error_df, x="Error Type", y="Count", title="API Errors by Type")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Add export option
+    if st.button("Export OpenAI Usage Data"):
+        export_data = {
+            "token_usage_summary": {
+                "total_tokens": total_tokens,
+                "average_tokens": avg_tokens,
+                "estimated_cost": metrics["total_cost"],
+            },
+            "hourly_usage": dict(metrics["hourly_usage"]),
+            "model_usage": dict(metrics["requests_by_type"]),
+            "error_rates": dict(metrics["error_rates"]),
+        }
+        st.download_button(
+            "Download JSON",
+            json.dumps(export_data, indent=2),
+            "openai_usage_metrics.json",
+            "application/json",
+        )
 
 
 def main():
@@ -502,8 +868,15 @@ def main():
             with st.spinner("Generating question..."):
                 random_question = generate_random_question()
                 st.session_state.random_question = random_question
-            # Force a rerun to update the main input
-            st.rerun()
+                # Clear any previous search results and reset the page
+                if "search_results" in st.session_state:
+                    del st.session_state.search_results
+                if "current_query" in st.session_state:
+                    del st.session_state.current_query
+                if "current_ratings" in st.session_state:
+                    st.session_state.current_ratings = {}
+                # Force a rerun to update the main input and clear results
+                st.rerun()
 
         st.header("Search History")
         if st.session_state.history:
@@ -589,7 +962,7 @@ def main():
     if "search_results" in st.session_state:
         results = st.session_state["search_results"]
         query = st.session_state["current_query"]
-        
+
         st.success(f"Found {len(results)} relevant regulations")
 
         # Add AI evaluation button for all results
@@ -597,19 +970,27 @@ def main():
             with st.spinner("Getting AI evaluations..."):
                 for idx, (metadata_item, score, chunk_text) in enumerate(results, 1):
                     result_dict = format_result(metadata_item, score, chunk_text)
-                    result_key = f"ai_eval_result_{metadata_item.get('section', '')}_{idx}"
-                    
+                    result_key = (
+                        f"ai_eval_result_{metadata_item.get('section', '')}_{idx}"
+                    )
+
                     # Only evaluate if not already evaluated
                     if result_key not in st.session_state.ai_evaluations:
                         ai_rating = auto_evaluate_result(result_dict, query)
                         if ai_rating:
                             st.session_state.ai_evaluations[result_key] = ai_rating
                             # Update the sliders with AI ratings
-                            st.session_state[f"relevance_{idx}"] = ai_rating["ratings"]["relevance"]
-                            st.session_state[f"quality_{idx}"] = ai_rating["ratings"]["quality"]
+                            st.session_state[f"relevance_{idx}"] = ai_rating["ratings"][
+                                "relevance"
+                            ]
+                            st.session_state[f"quality_{idx}"] = ai_rating["ratings"][
+                                "quality"
+                            ]
                             # Update the feedback text area with AI explanation
-                            st.session_state[f"feedback_{idx}"] = f"AI Evaluation: {ai_rating['explanation']}"
-            
+                            st.session_state[f"feedback_{idx}"] = (
+                                f"AI Evaluation: {ai_rating['explanation']}"
+                            )
+
             st.success("AI evaluations completed for all results!")
 
         # Add export options
@@ -654,9 +1035,7 @@ def main():
 
         # Add evaluation interface
         st.markdown("### Search Quality Evaluation")
-        st.markdown(
-            "Please help us improve search quality by rating the results:"
-        )
+        st.markdown("Please help us improve search quality by rating the results:")
 
         # Store ratings in session state
         if "current_ratings" not in st.session_state:
@@ -665,7 +1044,7 @@ def main():
         for idx, (metadata_item, score, chunk_text) in enumerate(results, 1):
             with st.expander(f"Result {idx} (Score: {score:.3f})", expanded=True):
                 result_dict = format_result(metadata_item, score, chunk_text)
-                
+
                 # Display metadata and content
                 col1, col2 = st.columns(2)
                 with col1:
@@ -689,13 +1068,13 @@ def main():
 
                 # Add AI evaluation section
                 st.markdown("#### AI Evaluation")
-                
+
                 # Create unique keys for this result
                 button_key = f"ai_eval_button_{idx}"
                 result_key = f"ai_eval_result_{metadata_item.get('section', '')}_{idx}"
-                
+
                 col1, col2 = st.columns([1, 3])
-                
+
                 with col1:
                     if st.button("🤖 Get AI Evaluation", key=button_key):
                         with st.spinner("Getting AI evaluation..."):
@@ -703,11 +1082,17 @@ def main():
                             if ai_rating:
                                 st.session_state.ai_evaluations[result_key] = ai_rating
                                 # Update the sliders with AI ratings
-                                st.session_state[f"relevance_{idx}"] = ai_rating["ratings"]["relevance"]
-                                st.session_state[f"quality_{idx}"] = ai_rating["ratings"]["quality"]
+                                st.session_state[f"relevance_{idx}"] = ai_rating[
+                                    "ratings"
+                                ]["relevance"]
+                                st.session_state[f"quality_{idx}"] = ai_rating[
+                                    "ratings"
+                                ]["quality"]
                                 # Update the feedback text area with AI explanation
-                                st.session_state[f"feedback_{idx}"] = f"AI Evaluation: {ai_rating['explanation']}"
-                                
+                                st.session_state[f"feedback_{idx}"] = (
+                                    f"AI Evaluation: {ai_rating['explanation']}"
+                                )
+
                 with col2:
                     if result_key in st.session_state.ai_evaluations:
                         st.markdown("**AI Ratings Applied**")
@@ -749,18 +1134,20 @@ def main():
 
         # Overall feedback
         st.markdown("### Overall Feedback")
-        
+
         col1, col2 = st.columns([1, 4])
         with col1:
             if st.button("🤖 Generate Overall Feedback"):
                 with st.spinner("Analyzing results..."):
-                    ai_feedback = generate_overall_feedback(results, st.session_state.ai_evaluations)
+                    ai_feedback = generate_overall_feedback(
+                        results, st.session_state.ai_evaluations
+                    )
                     st.session_state["overall_feedback"] = ai_feedback
-        
+
         overall_feedback = st.text_area(
             "Overall feedback about the search results",
             key="overall_feedback",
-            height=200
+            height=200,
         )
 
         # Submit evaluation
@@ -771,161 +1158,190 @@ def main():
                 ratings=st.session_state.current_ratings,
                 feedback=overall_feedback,
             )
-            st.success(
-                "Thank you for your feedback! Your evaluation has been saved."
-            )
+            st.success("Thank you for your feedback! Your evaluation has been saved.")
 
             # Clear current ratings
             st.session_state.current_ratings = {}
 
         # Add enhanced evaluation statistics
-        if st.session_state.evaluations:
-            with st.expander(
-                "View Detailed Evaluation Statistics", expanded=False
-            ):
-                st.markdown("### Search Quality Analysis")
+        eval_file = Path("data/evaluations/search_evaluations.json")
+        if eval_file.exists():
+            st.markdown("## Analytics Dashboard")
 
-                # Basic metrics
-                total_evaluations = len(st.session_state.evaluations)
-                total_ratings = sum(
-                    len(eval["ratings"])
-                    for eval in st.session_state.evaluations
-                )
+            # Basic Metrics Section
+            with st.expander("🔢 Basic Metrics", expanded=True):
+                try:
+                    with eval_file.open("r", encoding="utf-8") as f:
+                        evaluations = json.load(f)
 
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Evaluations", total_evaluations)
-                with col2:
-                    st.metric("Total Ratings", total_ratings)
-                with col3:
-                    st.metric(
-                        "Avg Ratings per Query",
-                        f"{total_ratings/total_evaluations:.1f}",
-                    )
+                    total_evaluations = len(evaluations)
+                    total_ratings = sum(len(eval["ratings"]) for eval in evaluations)
 
-                # Query Performance Analysis
-                st.markdown("### Query Performance")
-                query_stats = calculate_query_stats(
-                    st.session_state.evaluations
-                )
-
-                # Convert to DataFrame for visualization
-                query_df = pd.DataFrame(
-                    [
-                        {
-                            "Query": query,
-                            "Count": stats["count"],
-                            "Avg Relevance": stats["avg_relevance"],
-                            "Avg Quality": stats["avg_quality"],
-                            "Total Ratings": stats["total_ratings"],
-                        }
-                        for query, stats in query_stats.items()
-                    ]
-                )
-
-                # Sort by average relevance
-                query_df = query_df.sort_values(
-                    "Avg Relevance", ascending=False
-                )
-
-                # Show query performance table
-                st.dataframe(
-                    query_df.style.format(
-                        {"Avg Relevance": "{:.2f}", "Avg Quality": "{:.2f}"}
-                    )
-                )
-
-                # Feedback Theme Analysis
-                st.markdown("### Feedback Themes")
-                themes = analyze_feedback_themes(st.session_state.evaluations)
-
-                if themes:
-                    theme_df = pd.DataFrame(
-                        [
-                            {"Theme": theme, "Count": count}
-                            for theme, count in themes.most_common()
-                        ]
-                    )
-
-                    theme_chart = (
-                        alt.Chart(theme_df)
-                        .mark_bar()
-                        .encode(
-                            x="Count:Q",
-                            y=alt.Y("Theme:N", sort="-x"),
-                            tooltip=["Theme", "Count"],
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Evaluations", total_evaluations)
+                    with col2:
+                        st.metric("Total Ratings", total_ratings)
+                    with col3:
+                        st.metric(
+                            "Avg Ratings per Query",
+                            (
+                                f"{total_ratings/total_evaluations:.1f}"
+                                if total_evaluations > 0
+                                else "0.0"
+                            ),
                         )
-                        .properties(
-                            title="Common Feedback Themes",
-                            height=min(len(themes) * 40, 300),
+                except Exception as e:
+                    st.error(f"Error loading basic metrics: {str(e)}")
+
+            # Query Performance Section
+            with st.expander("📊 Query Performance Analysis", expanded=False):
+                try:
+                    st.markdown("### Query Performance")
+                    query_stats = calculate_query_stats(evaluations)
+                    query_df = pd.DataFrame(
+                        [
+                            {
+                                "Query": query,
+                                "Count": stats["count"],
+                                "Avg Relevance": stats["avg_relevance"],
+                                "Avg Quality": stats["avg_quality"],
+                                "Total Ratings": stats["total_ratings"],
+                            }
+                            for query, stats in query_stats.items()
+                        ]
+                    ).sort_values("Avg Relevance", ascending=False)
+
+                    st.dataframe(
+                        query_df.style.format(
+                            {"Avg Relevance": "{:.2f}", "Avg Quality": "{:.2f}"}
                         )
                     )
+                except Exception as e:
+                    st.error(f"Error loading query performance: {str(e)}")
 
-                    st.altair_chart(theme_chart, use_container_width=True)
-
-                # Time-based Analysis
-                st.markdown("### Quality Trends Over Time")
-
-                trend_data = []
-                for eval in st.session_state.evaluations:
-                    timestamp = pd.to_datetime(eval["timestamp"])
-                    avg_relevance = np.mean(
-                        [
-                            RELEVANCE_SCORES[r["relevance"]]
-                            for r in eval["ratings"].values()
-                        ]
-                    )
-                    avg_quality = np.mean(
-                        [
-                            QUALITY_SCORES[r["quality"]]
-                            for r in eval["ratings"].values()
-                        ]
-                    )
-
-                    trend_data.append(
-                        {
-                            "Date": timestamp,
-                            "Score": avg_relevance,
-                            "Type": "Relevance",
-                        }
-                    )
-                    trend_data.append(
-                        {
-                            "Date": timestamp,
-                            "Score": avg_quality,
-                            "Type": "Quality",
-                        }
-                    )
-
-                trend_df = pd.DataFrame(trend_data)
-
-                if not trend_df.empty:
-                    trend_chart = (
-                        alt.Chart(trend_df)
-                        .mark_line(point=True)
-                        .encode(
-                            x="Date:T",
-                            y="Score:Q",
-                            color="Type:N",
-                            tooltip=["Date", "Score", "Type"],
+            # Feedback Analysis Section
+            with st.expander("💭 Feedback Analysis", expanded=False):
+                try:
+                    themes = analyze_feedback_themes(evaluations)
+                    if themes:
+                        theme_df = pd.DataFrame(
+                            [
+                                {"Theme": theme, "Count": count}
+                                for theme, count in themes.most_common()
+                            ]
                         )
-                        .properties(title="Quality Metrics Over Time")
-                    )
+                        theme_chart = (
+                            alt.Chart(theme_df)
+                            .mark_bar()
+                            .encode(
+                                x="Count:Q",
+                                y=alt.Y("Theme:N", sort="-x"),
+                                tooltip=["Theme", "Count"],
+                            )
+                            .properties(
+                                title="Common Feedback Themes",
+                                height=min(len(themes) * 40, 300),
+                            )
+                        )
+                        st.altair_chart(theme_chart, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error loading feedback analysis: {str(e)}")
 
-                    st.altair_chart(trend_chart, use_container_width=True)
+            # Time Trends Section
+            with st.expander("📈 Quality Trends", expanded=False):
+                try:
+                    trend_data = []
+                    for eval in evaluations:
+                        timestamp = pd.to_datetime(eval["timestamp"])
+                        avg_relevance = np.mean(
+                            [
+                                RELEVANCE_SCORES[r["relevance"]]
+                                for r in eval["ratings"].values()
+                            ]
+                        )
+                        avg_quality = np.mean(
+                            [
+                                QUALITY_SCORES[r["quality"]]
+                                for r in eval["ratings"].values()
+                            ]
+                        )
+                        trend_data.extend(
+                            [
+                                {
+                                    "Date": timestamp,
+                                    "Score": avg_relevance,
+                                    "Type": "Relevance",
+                                },
+                                {
+                                    "Date": timestamp,
+                                    "Score": avg_quality,
+                                    "Type": "Quality",
+                                },
+                            ]
+                        )
 
-                # Export Evaluation Data
-                st.markdown("### Export Evaluation Data")
-                if st.button("Download Evaluation Data"):
-                    eval_df = pd.json_normalize(st.session_state.evaluations)
-                    csv = eval_df.to_csv(index=False)
-                    st.download_button(
-                        "Download CSV",
-                        csv,
-                        "regulation_search_evaluations.csv",
-                        "text/csv",
-                        key="download_eval",
-                    )
+                    trend_df = pd.DataFrame(trend_data)
+                    if not trend_df.empty:
+                        trend_chart = (
+                            alt.Chart(trend_df)
+                            .mark_line(point=True)
+                            .encode(
+                                x="Date:T",
+                                y="Score:Q",
+                                color="Type:N",
+                                tooltip=["Date", "Score", "Type"],
+                            )
+                            .properties(title="Quality Metrics Over Time")
+                        )
+                        st.altair_chart(trend_chart, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error loading time trends: {str(e)}")
+
+            # Advanced Analytics Section
+            with st.expander("🔬 Advanced Analytics", expanded=False):
+                try:
+                    advanced_metrics = analyze_advanced_metrics(evaluations)
+                    visualize_advanced_metrics(advanced_metrics)
+
+                    if st.button("Download Advanced Metrics"):
+                        metrics_json = json.dumps(advanced_metrics, indent=2)
+                        st.download_button(
+                            "Download JSON",
+                            metrics_json,
+                            "advanced_metrics.json",
+                            "application/json",
+                        )
+                except Exception as e:
+                    st.error(f"Error loading advanced analytics: {str(e)}")
+
+            # OpenAI Usage Section
+            with st.expander("🤖 OpenAI API Usage", expanded=False):
+                try:
+                    log_file = Path("data/logs/openai_20250215.log")
+                    if log_file.exists():
+                        openai_metrics = analyze_openai_logs(log_file)
+                        visualize_openai_metrics(openai_metrics)
+                    else:
+                        st.warning("No OpenAI usage logs found.")
+                except Exception as e:
+                    st.error(f"Error loading OpenAI usage metrics: {str(e)}")
+
+            # Export Section
+            with st.expander("📥 Export Data", expanded=False):
+                try:
+                    if st.button("Download Complete Evaluation Data"):
+                        eval_df = pd.json_normalize(evaluations)
+                        csv = eval_df.to_csv(index=False)
+                        st.download_button(
+                            "Download CSV",
+                            csv,
+                            "regulation_search_evaluations.csv",
+                            "text/csv",
+                            key="download_eval",
+                        )
+                except Exception as e:
+                    st.error(f"Error preparing export: {str(e)}")
 
     # Footer
     st.markdown("---")
