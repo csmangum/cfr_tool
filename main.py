@@ -50,6 +50,8 @@ from pipelines.get_data import ECFRDownloader
 from pipelines.process_data import process_agencies
 from pipelines.visualize_metrics import main as visualize_main
 
+from scripts.search_regulations import BooleanQueryProcessor, TemporalSearchEnhancer, AgencyRelationshipMapper
+
 
 def load_agencies():
     """Load the agencies from the JSON file."""

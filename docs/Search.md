@@ -163,3 +163,23 @@ def search(self, query: str, n_results: int = 5) -> list:
    - GPU acceleration
    - Distributed search
    - Improved caching strategies
+
+## Advanced Search Capabilities
+
+### 1. Boolean Query Support
+The `BooleanQueryProcessor` class has been added to handle boolean queries with AND, OR, and NOT operators. This allows users to create complex search queries such as "FOIA AND (request OR application) NOT expedited". The `parse_query` method breaks down the query into its components, and the `combine_results` method combines individual result sets according to the boolean logic specified in the query.
+
+### 2. Temporal Search
+The `TemporalSearchEnhancer` class has been introduced to handle temporal aspects of regulation search. It extracts temporal constraints from the query, such as date ranges, version types, and temporal contexts (e.g., "before", "after", "during"). The `RegulationSearcher` class uses this information to filter search results based on the specified time frame.
+
+### 3. Agency Relationship Mapping
+The `AgencyRelationshipMapper` class enhances the understanding of agency relationships. It maps relationships between agencies, including parent, child, collaborator, and delegated authority relationships. This allows the search system to include related agencies in the search results, providing a more comprehensive view of regulations.
+
+### 4. Integration into `RegulationSearcher`
+The `RegulationSearcher` class has been updated to integrate the new search capabilities. It now uses the `BooleanQueryProcessor` to parse boolean queries, the `TemporalSearchEnhancer` to apply temporal constraints, and the `AgencyRelationshipMapper` to include related agencies in the search results.
+
+### 5. API Updates
+The search endpoint in `streamlit_search.py` has been updated to support advanced search features. The request body now accepts parameters for boolean queries, temporal constraints, and agency relationships, allowing users to perform more sophisticated searches.
+
+### 6. Documentation Updates
+The documentation has been updated to include an advanced query syntax guide, details on temporal search features, and explanations of agency relationship features. This ensures that users have the necessary information to utilize the new search capabilities effectively.
