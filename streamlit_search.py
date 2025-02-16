@@ -262,13 +262,7 @@ def save_evaluation(
 def calculate_query_stats(evaluations: List[Dict]) -> Dict:
     """Calculate statistics about query performance."""
     try:
-        # Load evaluations from file if not provided
-        if not evaluations:
-            eval_file = Path("data/evaluations/search_evaluations.json")
-            if eval_file.exists():
-                with eval_file.open("r", encoding="utf-8") as f:
-                    evaluations = json.load(f)
-
+        # Initialize empty stats dictionary
         query_stats = defaultdict(
             lambda: {
                 "count": 0,
@@ -278,28 +272,53 @@ def calculate_query_stats(evaluations: List[Dict]) -> Dict:
             }
         )
 
+        if not evaluations:
+            return {}
+
         for eval in evaluations:
-            query = eval["query"]
+            query = eval.get("query", "")
+            if not query:  # Skip if query is empty
+                continue
+
+            ratings = eval.get("ratings", {})
+            if not ratings:  # Skip if no ratings
+                continue
+
             query_stats[query]["count"] += 1
 
-            relevance_sum = sum(
-                RELEVANCE_SCORES[r["relevance"]] for r in eval["ratings"].values()
-            )
-            quality_sum = sum(
-                QUALITY_SCORES[r["quality"]] for r in eval["ratings"].values()
-            )
-            num_ratings = len(eval["ratings"])
+            # Calculate relevance and quality only if there are valid ratings
+            relevance_scores = [
+                RELEVANCE_SCORES.get(r.get("relevance", "Not Relevant"), 0)
+                for r in ratings.values()
+                if r.get("relevance")
+            ]
 
-            current_stats = query_stats[query]
-            current_stats["total_ratings"] += num_ratings
-            current_stats["avg_relevance"] = (
-                current_stats["avg_relevance"] * (current_stats["count"] - 1)
-                + relevance_sum / num_ratings
-            ) / current_stats["count"]
-            current_stats["avg_quality"] = (
-                current_stats["avg_quality"] * (current_stats["count"] - 1)
-                + quality_sum / num_ratings
-            ) / current_stats["count"]
+            quality_scores = [
+                QUALITY_SCORES.get(r.get("quality", "Poor"), 0)
+                for r in ratings.values()
+                if r.get("quality")
+            ]
+
+            num_ratings = len(ratings)
+            if num_ratings > 0:
+                query_stats[query]["total_ratings"] += num_ratings
+
+                # Calculate averages only if there are scores
+                if relevance_scores:
+                    avg_relevance = sum(relevance_scores) / len(relevance_scores)
+                    query_stats[query]["avg_relevance"] = (
+                        query_stats[query]["avg_relevance"]
+                        * (query_stats[query]["count"] - 1)
+                        + avg_relevance
+                    ) / query_stats[query]["count"]
+
+                if quality_scores:
+                    avg_quality = sum(quality_scores) / len(quality_scores)
+                    query_stats[query]["avg_quality"] = (
+                        query_stats[query]["avg_quality"]
+                        * (query_stats[query]["count"] - 1)
+                        + avg_quality
+                    ) / query_stats[query]["count"]
 
         return dict(query_stats)
     except Exception as e:
@@ -504,45 +523,71 @@ def analyze_advanced_metrics(evaluations: List[Dict]) -> Dict:
             },
         }
 
+        if not evaluations:
+            return metrics
+
         for eval in evaluations:
             # Time of day analysis
-            timestamp = pd.to_datetime(eval["timestamp"])
-            hour = timestamp.hour
+            timestamp = pd.to_datetime(eval.get("timestamp", ""))
+            if timestamp:
+                hour = timestamp.hour
+                metrics["time_of_day_stats"][hour].append(1)
 
             # Query analysis
-            query_length = len(eval["query"].split())
+            query = eval.get("query", "")
+            if query:
+                query_length = len(query.split())
 
-            # Process each result
-            for result in eval["results"]:
-                # Agency performance
-                metrics["agency_performance"][result["Agency"]].append(
-                    RELEVANCE_SCORES[
-                        eval["ratings"].get(str(1), {}).get("relevance", "Not Relevant")
-                    ]
-                )
+                # Process results
+                results = eval.get("results", [])
+                ratings = eval.get("ratings", {})
 
-                # Section relevance
-                if result["Section"] != "N/A":
-                    metrics["section_relevance"][result["Section"]].append(
-                        RELEVANCE_SCORES[
-                            eval["ratings"]
-                            .get(str(1), {})
-                            .get("relevance", "Not Relevant")
-                        ]
-                    )
+                if results and ratings:
+                    # Calculate average relevance for this query
+                    relevance_scores = []
+                    for rating in ratings.values():
+                        relevance = rating.get("relevance", "Not Relevant")
+                        if relevance in RELEVANCE_SCORES:
+                            relevance_scores.append(RELEVANCE_SCORES[relevance])
 
-            # Query length impact
-            avg_relevance = np.mean(
-                [RELEVANCE_SCORES[r["relevance"]] for r in eval["ratings"].values()]
-            )
-            metrics["query_length_impact"].append((query_length, avg_relevance))
+                    if relevance_scores:
+                        avg_relevance = sum(relevance_scores) / len(relevance_scores)
+                        metrics["query_length_impact"].append(
+                            (query_length, avg_relevance)
+                        )
+
+                    # Process each result
+                    for result in results:
+                        if isinstance(result, dict):
+                            agency = result.get("Agency", "Unknown")
+                            section = result.get("Section", "Unknown")
+
+                            # Add relevance score to agency performance
+                            if agency and ratings:
+                                first_rating = next(iter(ratings.values()))
+                                relevance = first_rating.get(
+                                    "relevance", "Not Relevant"
+                                )
+                                if relevance in RELEVANCE_SCORES:
+                                    metrics["agency_performance"][agency].append(
+                                        RELEVANCE_SCORES[relevance]
+                                    )
+
+                            # Add relevance score to section performance
+                            if section and ratings:
+                                metrics["section_relevance"][section].append(
+                                    RELEVANCE_SCORES.get(relevance, 0)
+                                )
 
             # User engagement
             has_feedback = bool(eval.get("feedback"))
+            has_ai_eval = bool(eval.get("ai_evaluations"))
             has_detailed_feedback = any(
-                r.get("feedback") for r in eval["ratings"].values()
+                r.get("feedback") for r in eval.get("ratings", {}).values()
             )
+
             metrics["user_engagement"]["feedback_rate"] += int(has_feedback)
+            metrics["user_engagement"]["ai_eval_rate"] += int(has_ai_eval)
             metrics["user_engagement"]["detailed_feedback_rate"] += int(
                 has_detailed_feedback
             )
@@ -562,27 +607,33 @@ def analyze_advanced_metrics(evaluations: List[Dict]) -> Dict:
 
 def visualize_advanced_metrics(metrics: Dict):
     """Create visualizations for advanced metrics."""
+    st.markdown("## Advanced Analytics")
 
     # 1. Agency Performance Heatmap
     st.markdown("### Agency Performance Heatmap")
-    agency_scores = {
-        agency: np.mean(scores)
-        for agency, scores in metrics["agency_performance"].items()
-        if scores  # Only include agencies with data
-    }
-    if agency_scores:
-        agency_df = pd.DataFrame(
-            list(agency_scores.items()), columns=["Agency", "Average Score"]
-        ).sort_values("Average Score", ascending=False)
+    try:
+        agency_scores = {
+            agency: np.mean(scores) if scores else 0
+            for agency, scores in metrics.get("agency_performance", {}).items()
+        }
 
-        fig = px.imshow(
-            [agency_df["Average Score"]],
-            labels=dict(x="Agency", y="", color="Score"),
-            x=agency_df["Agency"],
-            aspect="auto",
-            title="Agency Performance Heatmap",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        if agency_scores:
+            agency_df = pd.DataFrame(
+                list(agency_scores.items()), columns=["Agency", "Average Score"]
+            ).sort_values("Average Score", ascending=False)
+
+            fig = px.imshow(
+                [agency_df["Average Score"]],
+                labels=dict(x="Agency", y="", color="Score"),
+                x=agency_df["Agency"],
+                aspect="auto",
+                title="Agency Performance Heatmap",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No agency performance data available yet.")
+    except Exception as e:
+        st.error(f"Error creating agency performance heatmap: {str(e)}")
 
     # 2. Query Length Impact
     st.markdown("### Query Length Impact on Relevance")
@@ -1199,26 +1250,44 @@ def main():
                 try:
                     st.markdown("### Query Performance")
                     query_stats = calculate_query_stats(evaluations)
-                    query_df = pd.DataFrame(
-                        [
-                            {
-                                "Query": query,
-                                "Count": stats["count"],
-                                "Avg Relevance": stats["avg_relevance"],
-                                "Avg Quality": stats["avg_quality"],
-                                "Total Ratings": stats["total_ratings"],
-                            }
-                            for query, stats in query_stats.items()
-                        ]
-                    ).sort_values("Avg Relevance", ascending=False)
 
-                    st.dataframe(
-                        query_df.style.format(
-                            {"Avg Relevance": "{:.2f}", "Avg Quality": "{:.2f}"}
+                    if query_stats:
+                        query_df = pd.DataFrame(
+                            [
+                                {
+                                    "Query": query,
+                                    "Count": stats["count"],
+                                    "Avg Relevance": stats["avg_relevance"],
+                                    "Avg Quality": stats["avg_quality"],
+                                    "Total Ratings": stats["total_ratings"],
+                                }
+                                for query, stats in query_stats.items()
+                            ]
                         )
-                    )
+
+                        if not query_df.empty:
+                            query_df = query_df.sort_values(
+                                "Avg Relevance", ascending=False
+                            )
+                            st.dataframe(
+                                query_df.style.format(
+                                    {
+                                        "Avg Relevance": "{:.2f}",
+                                        "Avg Quality": "{:.2f}",
+                                        "Count": "{:,}",
+                                        "Total Ratings": "{:,}",
+                                    }
+                                )
+                            )
+                        else:
+                            st.info("No query performance data available yet.")
+                    else:
+                        st.info(
+                            "No evaluations available. Start rating search results to see performance metrics."
+                        )
                 except Exception as e:
                     st.error(f"Error loading query performance: {str(e)}")
+                    st.error("Please ensure the evaluation data is properly formatted.")
 
             # Feedback Analysis Section
             with st.expander("💭 Feedback Analysis", expanded=False):
