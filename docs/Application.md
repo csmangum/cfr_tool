@@ -5,6 +5,9 @@ This document describes the interactive web applications for analyzing and searc
 ![Analysis Dashboard](../docs/images/app.png)
 *Federal Regulations Analysis Dashboard showing word count analysis and agency comparisons*
 
+[Screenshot needed: Add a screenshot of the Search Interface showing search results and evaluation features]
+*Semantic Search Interface with evaluation features and analytics dashboard*
+
 ## Overview
 
 The application suite consists of two Streamlit interfaces:
@@ -92,7 +95,7 @@ streamlit run streamlit_search.py
 - **Agency Filters**: Filter by specific agencies
 - **Date Range**: Filter by regulation date
 - **Similarity Threshold**: Set minimum similarity score
-- **Sample Questions**: Try random example queries
+- **Random Question Generator**: AI-powered question suggestions
 
 #### 2. Search Results
 - Relevance scores
@@ -100,21 +103,39 @@ streamlit run streamlit_search.py
 - Regulation text
 - Interactive expandable sections
 
-#### 3. Export Options
+#### 3. Evaluation Features
+- **AI Evaluation**: Automatic relevance and quality assessment
+- **Manual Evaluation**: User feedback collection
+- **Rating System**:
+  - Relevance: Not Relevant to Very Relevant
+  - Quality: Poor to Excellent
+- **Feedback Collection**: Per-result and overall feedback
+
+#### 4. Analytics Dashboard
+- **Query Performance**:
+  - Success rates
+  - Average relevance scores
+  - Quality metrics
+- **Feedback Analysis**:
+  - Common themes
+  - User satisfaction
+  - Areas for improvement
+- **OpenAI Usage Analytics**:
+  - Token usage
+  - Cost tracking
+  - API performance metrics
+
+#### 5. Export Options
 - CSV format
 - JSON format
 - TXT format
-- Custom formatting options
+- Analytics data export
 
-#### 4. Visualizations
-- Score distribution histograms
-- Agency breakdown pie charts
-- Interactive plots
-
-#### 5. Search History
+#### 6. Search History
 - Recent queries list
 - One-click rerun
 - History clearing
+- Performance tracking
 
 ### Interface Layout
 ```
@@ -122,16 +143,20 @@ streamlit run streamlit_search.py
 ├── Sidebar
 │   ├── Search Options
 │   ├── Filters
-│   ├── Sample Questions
+│   ├── Random Questions
 │   └── Search History
 └── Main Content
     ├── Search Bar
     ├── Results Display
     │   ├── Metadata
     │   ├── Text Content
-    │   └── Similarity Score
-    ├── Export Options
-    └── Visualizations
+    │   ├── AI Evaluation
+    │   └── User Feedback
+    ├── Analytics Dashboard
+    │   ├── Performance Metrics
+    │   ├── Usage Statistics
+    │   └── Feedback Analysis
+    └── Export Options
 ```
 
 ## Usage Examples
@@ -148,13 +173,16 @@ streamlit run streamlit_search.py
 
 ### Search Interface
 ```python
-# Example: Searching for specific regulations
-1. Enter query: "What are the requirements for cybersecurity compliance?"
+# Example: Using AI-enhanced search
+1. Generate random question or enter custom query
 2. Set filters:
    - Minimum similarity: 0.7
    - Agencies: ["Department of Defense", "Department of Homeland Security"]
    - Date range: Last 2 years
-3. Export results as JSON
+3. Get AI evaluations for results
+4. Provide manual feedback
+5. View analytics dashboard
+6. Export results and analysis
 ```
 
 ## Performance Considerations
@@ -168,32 +196,9 @@ streamlit run streamlit_search.py
 ### Search Interface
 - Fast similarity search using FAISS
 - Efficient metadata retrieval
-- Optimized result formatting
-- Responsive query handling
-
-## Customization
-
-### Dashboard Customization
-```python
-# Add new visualization
-def plot_custom_metric(filtered_df):
-    # Custom visualization code
-    pass
-
-# Add to analysis sections
-if analysis_mode == "Custom Analysis":
-    plot_custom_metric(filtered_df)
-```
-
-### Search Interface Customization
-```python
-# Add custom filter
-with st.sidebar:
-    custom_filter = st.selectbox(
-        "Custom Filter",
-        options=["Option 1", "Option 2"]
-    )
-```
+- OpenAI API logging and monitoring
+- Evaluation data caching
+- Analytics optimization
 
 ## Troubleshooting
 
@@ -207,11 +212,18 @@ Common issues and solutions:
    - Check minimum similarity score
    - Verify database connection
    - Refresh FAISS index
+   - Check OpenAI API status
 
-3. **Visualization Errors**
-   - Check data filtering
-   - Verify metric selection
-   - Reset to defaults
+3. **AI Evaluation Issues**
+   - Verify OpenAI API key
+   - Check API rate limits
+   - Monitor usage logs
+   - Clear evaluation cache
+
+4. **Analytics Issues**
+   - Check evaluation data files
+   - Verify log file access
+   - Reset analytics cache
 
 ## References
 
@@ -219,4 +231,5 @@ For additional information:
 - [Analysis Documentation](Analysis.md)
 - [Pipeline Documentation](Pipeline.md)
 - [Search Documentation](Search.md)
-- [Streamlit Documentation](https://docs.streamlit.io) 
+- [Streamlit Documentation](https://docs.streamlit.io)
+- [OpenAI API Documentation](https://platform.openai.com/docs) 
